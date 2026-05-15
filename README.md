@@ -1,6 +1,8 @@
 # Personal Pi Config
 
-![Pi config screenshot](assets/pi-config.png)
+<p align="center">
+  <img src="assets/pi-config.png" alt="Pi config screenshot">
+</p>
 
 This is my personal [Pi](https://pi.dev) configuration. It contains my agent preferences, settings, themes, extensions, and other local setup bits.
 
