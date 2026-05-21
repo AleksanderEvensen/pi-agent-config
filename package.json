@@ -2,15 +2,28 @@
   "name": "agent",
   "version": "1.0.0",
   "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint .",
+    "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "packageManager": "pnpm@10.33.0",
   "dependencies": {
-    "ansis": "^4.3.0"
-  }
+    "@earendil-works/pi-ai": "^0.75.4",
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@earendil-works/pi-tui": "^0.75.4",
+    "ansis": "^4.3.0",
+    "typebox": "^1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "oxfmt": "^0.51.0",
+    "oxlint": "^1.66.0",
+    "typescript": "^6.0.3"
+  },
+  "packageManager": "pnpm@10.33.0"
 }
