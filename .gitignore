@@ -8,5 +8,7 @@ auth.json
 models.json
 settings.json
 mcp-cache.json
+openai-fast-mode.json
+openai-fast-mode-replacements.jsonl
 git/
 
