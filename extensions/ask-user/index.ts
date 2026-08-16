@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
@@ -12,7 +13,7 @@ import {
 import { Type } from "typebox";
 
 const TOOL_NAME = "ask_user";
-const CUSTOM_LABEL = "Write your own answer…";
+const CUSTOM_LABEL = "Write your own answer...";
 
 const OptionSchema = Type.Object({
   label: Type.String({ description: "Concise option label" }),
@@ -90,6 +91,11 @@ function answerChoices(question: Question, answer: AnswerState): AnswerChoice[] 
 }
 
 export default function askUser(pi: ExtensionAPI) {
+  pi.on("resources_discover", (_event, ctx) => {
+    if (!isTuiContext(ctx)) return;
+    return { skillPaths: [join(__dirname, "SKILL.md")] };
+  });
+
   pi.registerTool({
     name: TOOL_NAME,
     label: "Ask User",
