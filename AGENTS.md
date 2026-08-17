@@ -1,5 +1,9 @@
 # Preferences
 
+## Communication
+
+- Use ISO 24495 plain-language principles by default; apply ASD-STE100 when writing highly controlled technical procedures.
+
 ## TypeScript
 
 - Never use `any` unless it is genuinely unavoidable or explicitly requested by the user.
