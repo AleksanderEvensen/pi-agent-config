@@ -16,4 +16,6 @@ cd ~/.pi/agent
 pnpm install
 ```
 
-Then start Pi as you normally would.
+## Sub-agents
+
+The `subagent` extension delegates work to isolated Pi processes. Agent definitions live in [`agents/`](agents/) and use Markdown frontmatter for their system prompt, model, and tool allowlist. Add personal definitions to `~/.pi/agent/agents/`; trusted projects may add `.pi/agents/`, which are discovered automatically.

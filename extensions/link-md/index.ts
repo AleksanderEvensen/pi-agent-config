@@ -6,41 +6,55 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 const IMAGE_PLACEHOLDER = "[image omitted]";
 
-function quoteCallout(label: string, body: string): string {
-  const lines = body.split("\n");
-  return [`> [!${label}]`, ...lines.map((line) => `> ${line}`), ""].join("\n");
+function callout(type: string, title: string, bodyLines: string[] = []): string {
+  const lines = [`> [!${type}] ${title}`, ...bodyLines.map((line) => `> ${line}`)];
+  return lines.join("\n");
 }
 
 function contentText(content: string | (TextContent | ImageContent)[]): string {
   if (typeof content === "string") return content;
-  return content
-    .map((part) => (part.type === "text" ? part.text : IMAGE_PLACEHOLDER))
-    .join("\n");
+  return content.map((part) => (part.type === "text" ? part.text : IMAGE_PLACEHOLDER)).join("\n");
 }
 
 export function formatUserMessage(message: Pick<UserMessage, "content">): string {
-  return quoteCallout("USER", contentText(message.content));
+  return callout("quote", "User", contentText(message.content).split("\n"));
 }
 
 export function formatAssistantMessage(message: Pick<AssistantMessage, "content">): string {
-  return message.content
+  const text = message.content
     .filter((part): part is TextContent => part.type === "text")
     .map((part) => part.text)
     .join("\n");
+
+  return text ? callout("abstract", "Pi Agent", text.split("\n")) : "";
 }
 
 async function prepareFile(path: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
+
   try {
     await access(path);
-    if ((await stat(path)).size > 0) await writeFile(path, "\n\n---\n\n", { flag: "a" });
-  } catch {
-    await writeFile(path, "", { flag: "a" });
+    const info = await stat(path);
+    if (!info.isFile()) throw new Error("path is not a file");
+    if (info.size > 0) await writeFile(path, "\n\n---\n\n", { flag: "a" });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      await writeFile(path, "");
+      return;
+    }
+    throw error;
   }
+}
+
+function resolveCapturePath(cwd: string, rawPath: string): string {
+  if (rawPath === "~") return homedir();
+  if (rawPath.startsWith("~/")) return resolve(homedir(), rawPath.slice(2));
+  return resolve(cwd, rawPath);
 }
 
 export default function linkMarkdown(pi: ExtensionAPI): void {
@@ -54,19 +68,22 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
   const append = async (
     text: string,
     ctx: { ui: { notify(message: string, level: "info" | "warning" | "error"): void } },
-    separator = false,
   ): Promise<void> => {
     const path = activePath;
     if (!path || !text) return;
 
-    writeQueue = writeQueue.then(() =>
-      writeFile(path, `${text}${separator ? "\n\n---\n\n" : "\n"}`, { flag: "a" }),
-    );
+    writeQueue = writeQueue
+      .catch(() => undefined)
+      .then(() => writeFile(path, `${text}\n`, { flag: "a" }));
+
     try {
       await writeQueue;
     } catch (error) {
       disable();
-      ctx.ui.notify(`Could not write Markdown: ${error instanceof Error ? error.message : String(error)}`, "error");
+      ctx.ui.notify(
+        `Could not write Markdown: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
     }
   };
 
@@ -79,13 +96,16 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
         return;
       }
 
-      const path = resolve(ctx.cwd, rawPath);
+      const path = resolveCapturePath(ctx.cwd, rawPath);
       try {
         await prepareFile(path);
         activePath = path;
-        ctx.ui.notify(`Markdown capture linked to ${path}`, "info");
+        ctx.ui.notify(`Markdown capture linked to: ${path}`, "info");
       } catch (error) {
-        ctx.ui.notify(`Could not link Markdown file: ${error instanceof Error ? error.message : String(error)}`, "error");
+        ctx.ui.notify(
+          `Could not link Markdown file: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
       }
     },
   });
@@ -97,27 +117,24 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
         ctx.ui.notify("Markdown capture is already off", "info");
         return;
       }
-      activePath = undefined;
+      disable();
       ctx.ui.notify("Markdown capture disabled", "info");
     },
   });
 
   pi.on("message_end", async (event, ctx) => {
     if (!activePath) return;
-    const message = event.message;
 
+    const message = event.message;
     if (message.role === "user") {
       await append(formatUserMessage(message), ctx);
-      return;
-    }
-
-    if (message.role === "assistant") {
-      const text = formatAssistantMessage(message);
-      if (text) await append(text, ctx);
+    } else if (message.role === "assistant") {
+      await append(formatAssistantMessage(message), ctx);
     }
   });
 
-  pi.on("session_shutdown", () => {
-    activePath = undefined;
+  pi.on("session_shutdown", async () => {
+    disable();
+    await writeQueue.catch(() => undefined);
   });
 }
