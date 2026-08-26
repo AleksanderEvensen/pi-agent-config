@@ -8,10 +8,15 @@ function playDoneSound(): void {
     detached: true,
     stdio: "ignore",
   });
+  child.on("error", () => {});
   child.unref();
 }
 
 export default function (pi: ExtensionAPI) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
   pi.on("agent_end", async () => {
     playDoneSound();
   });
