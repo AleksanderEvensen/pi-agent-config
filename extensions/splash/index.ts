@@ -3,12 +3,15 @@ import { VERSION } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 // oxfmt-ignore
-const logo = [
+const piLogo = [
 	"██████  ",
 	"██  ██  ",
 	"████  ██",
 	"██    ██"
 ];
+
+// Tau is the ephemeral counterpart to pi: 2π, but with no saved session.
+const tauLogo = ["████████", "   ██   ", "   ██   ", "   ████ "];
 
 function center(line: string, width: number): string {
   const trimmedLine = line.trimEnd();
@@ -16,17 +19,18 @@ function center(line: string, width: number): string {
   return truncateToWidth(`${" ".repeat(padding)}${line}`, width);
 }
 
-function splashLines(theme: Theme, model: string): string[] {
-  const blue = (text: string) => theme.fg("accent", text);
+function splashLines(theme: Theme, model: string, ephemeral: boolean): string[] {
+  const logo = ephemeral ? tauLogo : piLogo;
+  const logoColor = (text: string) => theme.fg(ephemeral ? "warning" : "accent", text);
   const cyan = (text: string) => theme.fg("thinkingMedium", text);
   const dim = (text: string) => theme.fg("dim", text);
   const muted = (text: string) => theme.fg("muted", text);
 
   return [
     "",
-    ...logo.map((line) => blue(theme.bold(line))),
+    ...logo.map((line) => logoColor(theme.bold(line))),
     "",
-    `${cyan("pi")} ${dim(`v${VERSION}`)} ${muted("•")} ${muted(model)}`,
+    `${cyan(ephemeral ? "τ" : "pi")} ${dim(`v${VERSION}`)} ${muted("•")} ${muted(model)}${ephemeral ? ` ${muted("•")} ${theme.fg("warning", "no session")}` : ""}`,
     "",
   ];
 }
@@ -38,7 +42,11 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setHeader((_tui, theme) => ({
       invalidate() {},
       render(width: number): string[] {
-        return splashLines(theme, ctx.model?.id ?? "no-model").map((line) => center(line, width));
+        return splashLines(
+          theme,
+          ctx.model?.id ?? "no-model",
+          ctx.sessionManager.getSessionFile() === undefined,
+        ).map((line) => center(line, width));
       },
     }));
   });
