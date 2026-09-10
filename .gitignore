@@ -11,4 +11,5 @@ mcp-cache.json
 models-store.json
 openai-fast-mode.json
 openai-fast-mode-replacements.jsonl
+trust.json
 git/

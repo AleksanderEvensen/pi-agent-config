@@ -16,6 +16,17 @@ function isModelsResponse(value: unknown): value is ModelsResponse {
   return typeof value === "object" && value !== null && "data" in value;
 }
 
+// SIMPLIFIED: heuristic vision detection — IDUN's /v1/models exposes no capability
+// metadata, so multimodal support is inferred from the model ID. Covers explicit
+// vision naming (Vision, -VL, VLM, 4V, omni) and the GLM-5.x line, which is
+// vision-capable despite its name (see docs.z.ai/guides/vlm/glm-5.3-flash).
+// Upgrade path: curated list or capability probe if IDUN exposes metadata.
+const VISION_PATTERN = /vision|-vl|vlm|4v|omni|glm-5/i;
+
+function supportsVision(id: string): boolean {
+  return VISION_PATTERN.test(id);
+}
+
 function modelFromId(id: string): Model<"openai-completions"> {
   return {
     id,
@@ -23,8 +34,9 @@ function modelFromId(id: string): Model<"openai-completions"> {
     api: "openai-completions",
     provider: PROVIDER_ID,
     baseUrl: BASE_URL,
-    reasoning: false,
-    input: ["text"],
+
+    reasoning: true,
+    input: supportsVision(id) ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: DEFAULT_MAX_TOKENS,

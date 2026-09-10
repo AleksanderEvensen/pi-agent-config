@@ -16,6 +16,7 @@ Apply these rules to coding tasks; do not force them on prose, research, or gene
 
 ## Commands
 
+- Prefer `rg` and `fd` as faster alternatives to `grep` and `find`; they respect `.gitignore` by default and are usually more convenient for repository searches.
 - Do not run development server commands such as `pnpm run dev`, `bun run dev`, `vp dev`/`vpr dev`, or similar. Assume the dev server is already running. If it is not, ask the user to start it.
 - Do not run build commands unless the user explicitly asks for them.
 - Type checking without emitting is always acceptable, including `tsc --noEmit` or project typechecking scripts.
