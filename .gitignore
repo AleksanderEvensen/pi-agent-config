@@ -1,6 +1,8 @@
 node_modules
 **/node_modules/
 
+web-search-cache/
+
 .env
 
 sessions
