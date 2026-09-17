@@ -14,11 +14,13 @@ const IMAGE_PLACEHOLDER = "[image omitted]";
 
 function callout(type: string, title: string, bodyLines: string[] = []): string {
   const lines = [`> [!${type}] ${title}`, ...bodyLines.map((line) => `> ${line}`)];
+
   return lines.join("\n");
 }
 
 function contentText(content: string | (TextContent | ImageContent)[]): string {
-  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return content;
+
   return content.map((part) => (part.type === "text" ? part.text : IMAGE_PLACEHOLDER)).join("\n");
 }
 
@@ -28,8 +30,7 @@ export function formatUserMessage(message: Pick<UserMessage, "content">): string
 
 export function formatAssistantMessage(message: Pick<AssistantMessage, "content">): string {
   const text = message.content
-    .filter((part): part is TextContent => part.type === "text")
-    .map((part) => part.text)
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
     .join("\n");
 
   return text ? callout("abstract", "Pi Agent", text.split("\n")) : "";
@@ -41,20 +42,26 @@ async function prepareFile(path: string): Promise<void> {
   try {
     await access(path);
     const info = await stat(path);
+
     if (!info.isFile()) throw new Error("path is not a file");
+
     if (info.size > 0) await writeFile(path, "\n\n---\n\n", { flag: "a" });
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       await writeFile(path, "");
+
       return;
     }
+
     throw error;
   }
 }
 
 function resolveCapturePath(cwd: string, rawPath: string): string {
   if (rawPath === "~") return homedir();
+
   if (rawPath.startsWith("~/")) return resolve(homedir(), rawPath.slice(2));
+
   return resolve(cwd, rawPath);
 }
 
@@ -71,6 +78,7 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
     ctx: { ui: { notify(message: string, level: "info" | "warning" | "error"): void } },
   ): Promise<void> => {
     const path = activePath;
+
     if (!path || !text) return;
 
     writeQueue = writeQueue
@@ -89,12 +97,15 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
     description: "Capture future conversation messages in a Markdown file",
     handler: async (args, ctx) => {
       const rawPath = args.trim();
+
       if (!rawPath) {
         ctx.ui.notify("Usage: /link-md <file-path>", "warning");
+
         return;
       }
 
       const path = resolveCapturePath(ctx.cwd, rawPath);
+
       try {
         await prepareFile(path);
         activePath = path;
@@ -110,8 +121,10 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       if (!activePath) {
         ctx.ui.notify("Markdown capture is already off", "info");
+
         return;
       }
+
       disable();
       ctx.ui.notify("Markdown capture disabled", "info");
     },
@@ -121,6 +134,7 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
     if (!activePath) return;
 
     const message = event.message;
+
     if (message.role === "user") {
       await append(formatUserMessage(message), ctx);
     } else if (message.role === "assistant") {

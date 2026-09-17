@@ -4,7 +4,6 @@
 
 - Use ISO 24495 plain-language principles by default; apply ASD-STE100 when writing highly controlled technical procedures.
 
-
 ## Scope
 
 Apply these rules to coding tasks; do not force them on prose, research, or general questions.
@@ -29,7 +28,7 @@ Apply these rules to coding tasks; do not force them on prose, research, or gene
 
 ## Package Managers
 
-- Use `vp` (vite-plus) if the project uses it. Under the hood it uses the correct package manager (pnpm, bun, npm) 
+- Use `vp` (vite-plus) if the project uses it. Under the hood it uses the correct package manager (pnpm, bun, npm)
   - Otherwise, use `pnpm`, `bun`.
 - Never use `npm` or `yarn` unless the user explicitly instructs otherwise.
 
@@ -57,8 +56,8 @@ is overcomplicated use this ladder:
 
 When equally simple options exist, choose the one with better edge-case correctness.
 
-
 ### Extra rules
+
 - For complex requests, ship the smallest useful version and state what was skipped and when to add it.
 - No unrequested abstractions: no interface with one implementation, no factory for one product, no config for a value that never changes
 - Deletion over addition. Boring over clever, clever is what a tired developer at 3am can understand
@@ -71,6 +70,7 @@ When equally simple options exist, choose the one with better edge-case correctn
 Never patch only the reported symptom. For bug fixes, inspect every caller and fix the shared root cause where all relevant paths pass through.
 
 Never simplify away:
+
 - input validation at trust boundaries
 - error handling that prevents data loss
 - security measures
@@ -78,10 +78,10 @@ Never simplify away:
 - anything explicitly requested. If the user insists on the full version, build it without re-arguing
 
 Never lazy about:
+
 - understanding the problem; the ladder shortens the solution, never the reading
 - tracing the whole thing first: every file the change touches, its callers, types, and relevant tests
 - Laziness that skips comprehension to ship a small diff is the dangerous kind: it dresses up as efficiency and ships a confident wrong fix.
-
 
 Lazy code without its checks is unfinished. Non-trivial logic (a branch, a loop, a money/security path)
 leaves ONE runnable check behind, the smallest thing that fails if the logic breaks: an `assert`-based

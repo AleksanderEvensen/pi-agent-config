@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Schema } from "effect";
 
 type UsageWindow = {
   used_percent?: number;
@@ -25,6 +26,7 @@ type UsageResponse = {
 
 function formatNorwegianDate(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
+
   return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
@@ -38,6 +40,7 @@ function formatDuration(milliseconds: number): string {
   if (days > 0) {
     return `${days}d ${hours}h`;
   }
+
   return `${hours}h ${minutes}m`;
 }
 
@@ -46,12 +49,14 @@ function formatWindow(label: string, window?: UsageWindow): string[] {
 
   const used = window.used_percent ?? 0;
   const remaining = Math.max(0, 100 - used);
+
   const resetDate =
-    typeof window.reset_at === "number"
-      ? new Date(window.reset_at * 1000)
-      : window.reset_at
-        ? new Date(window.reset_at)
-        : undefined;
+    window.reset_at === undefined
+      ? undefined
+      : Schema.is(Schema.Number)(window.reset_at)
+        ? new Date(window.reset_at * 1000)
+        : new Date(window.reset_at);
+
   const reset =
     resetDate && !Number.isNaN(resetDate.getTime())
       ? `${formatNorwegianDate(resetDate)} (${formatDuration(resetDate.getTime() - Date.now())})`
@@ -71,6 +76,7 @@ function formatWindow(label: string, window?: UsageWindow): string[] {
 
 export async function resolveCodexAuth(ctx: Pick<ExtensionContext, "model" | "modelRegistry">) {
   const activeProvider = ctx.model?.provider;
+
   const providerNames = [
     activeProvider?.includes("codex") ? activeProvider : undefined,
     "openai-codex",
@@ -83,21 +89,24 @@ export async function resolveCodexAuth(ctx: Pick<ExtensionContext, "model" | "mo
   for (const provider of providerNames) {
     try {
       const candidate = await ctx.modelRegistry.getProviderAuth(provider);
+
       if (candidate?.auth?.apiKey) return candidate;
     } catch {
       // Try the next Codex provider name.
     }
   }
+
   return undefined;
 }
 
 async function loadUsage(ctx: ExtensionContext): Promise<UsageResponse> {
   const auth = await resolveCodexAuth(ctx);
+
   if (!auth?.auth?.apiKey) {
     throw new Error("Pi did not expose a Codex OAuth token for the active provider.");
   }
 
-  const headers: Record<string, string> = {
+  const headers = {
     Accept: "application/json",
     Authorization: `Bearer ${auth.auth.apiKey}`,
     "User-Agent": "pi-codex-usage",
@@ -105,6 +114,7 @@ async function loadUsage(ctx: ExtensionContext): Promise<UsageResponse> {
   };
 
   const accountId = headers["ChatGPT-Account-Id"] ?? headers["ChatGPT-Account-ID"];
+
   if (accountId) headers["ChatGPT-Account-Id"] = accountId;
 
   const response = await fetch("https://chatgpt.com/backend-api/wham/usage", { headers });
@@ -113,6 +123,7 @@ async function loadUsage(ctx: ExtensionContext): Promise<UsageResponse> {
     throw new Error(`Codex usage request failed: HTTP ${response.status}`);
   }
 
+  // SAFETY: the usage endpoint is documented to return the UsageResponse shape.
   return (await response.json()) as UsageResponse;
 }
 
@@ -132,19 +143,24 @@ export default function (pi: ExtensionAPI) {
     description: "Toggle Codex session and weekly usage",
     handler: async (args, ctx) => {
       const action = args.trim().toLowerCase();
+
       if (!action && usageVisible) {
         hideUsage(ctx);
+
         return;
       }
 
       if (!ctx.hasUI) {
         ctx.ui.notify("/usage requires a UI.", "error");
+
         return;
       }
 
       let lines: string[];
+
       try {
         const usage = await loadUsage(ctx);
+
         const extraLines = (usage.additional_rate_limits ?? []).flatMap((extra) => [
           "",
           ...formatWindow(
@@ -152,6 +168,7 @@ export default function (pi: ExtensionAPI) {
             extra.rate_limit?.primary_window ?? extra.rate_limit?.secondary_window,
           ),
         ]);
+
         lines = [
           `Plan: ${usage.plan_type ?? "unknown"}`,
           usage.account_id ? `Account: ${usage.account_id}` : "",

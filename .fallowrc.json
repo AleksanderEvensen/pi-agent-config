@@ -1,9 +1,8 @@
 {
   // This file is JSONC: fallow reads these comments; generic JSON tools may not.
   "$schema": "./node_modules/fallow/schema.json",
-  "entry": [
-    "extensions/**/*.{ts,tsx,js,jsx}"
-  ],
+  "entry": ["extensions/**/*.{ts,tsx,js,jsx}"],
+  "ignorePatterns": ["extensions/herdr-agent-state.ts"],
   "duplicates": {
     // Hide pair-only clones; focus on widespread copy-paste
     // worth refactoring. Lower to 2 to report every duplicate pair.
@@ -16,8 +15,6 @@
     //   "**/generated/**"     // OpenAPI, Protobuf codegen
     // ]
   },
-  "ignoreDependencies": [
-    "pi-web-access"
-  ],
+  "ignoreDependencies": ["pi-web-access"],
   "rules": {}
 }

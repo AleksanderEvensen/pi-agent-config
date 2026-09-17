@@ -9,8 +9,10 @@ export default function (pi: ExtensionAPI) {
     description: "Choose reasoning level",
     handler: async (ctx) => {
       const model = ctx.model;
+
       if (!model?.reasoning) {
         ctx.ui.notify("Current model does not support reasoning", "warning");
+
         return;
       }
 
@@ -29,8 +31,10 @@ export default function (pi: ExtensionAPI) {
             handleInput: (data) => {
               if (matchesKey(data, shortcut)) {
                 done(null);
+
                 return;
               }
+
               selector.getSelectList().handleInput(data);
               tui.requestRender();
             },

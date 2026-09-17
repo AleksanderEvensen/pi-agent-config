@@ -22,6 +22,7 @@ export function herdrCommandLine(
   closePaneId?: string,
 ): string {
   const invocation = [command, ...args].map(shellQuote).join(" ");
+
   if (!closePaneId) return invocation;
 
   return `${invocation}; status=$?; if [ "$status" -eq 0 ]; then herdr pane close ${shellQuote(closePaneId)}; else printf '\\nSubagent exited with status %s; pane kept open for inspection.\\n' "$status"; fi`;
@@ -47,9 +48,11 @@ const makeSpawn = Effect.fn("HerdrMux.makeSpawn")(function* () {
 
   return Effect.fn("HerdrMux.spawn")(function* (request: SpawnRequest) {
     const splitArgs = ["pane", "split", "--current", "--direction", "right", "--cwd", request.cwd];
+
     for (const [name, value] of Object.entries(request.environment ?? {})) {
       splitArgs.push("--env", `${name}=${value}`);
     }
+
     splitArgs.push("--no-focus");
     const split = yield* runHerdr(splitArgs);
 
@@ -69,12 +72,14 @@ const makeSpawn = Effect.fn("HerdrMux.makeSpawn")(function* () {
     const scriptPath = yield* fs
       .makeTempFile({ prefix: "pi-subagent-", suffix: ".sh" })
       .pipe(Effect.mapError((cause) => new MuxError({ mux: "herdr", message: String(cause) })));
+
     const script = [
       "#!/usr/bin/env bash",
       `rm -f -- ${shellQuote(scriptPath)}`,
       herdrCommandLine(request.command, request.args, request.closeOnExit ? paneId : undefined),
       "",
     ].join("\n");
+
     yield* fs
       .writeFileString(scriptPath, script, { mode: 0o600 })
       .pipe(Effect.mapError((cause) => new MuxError({ mux: "herdr", message: String(cause) })));
@@ -87,12 +92,15 @@ const makeSpawn = Effect.fn("HerdrMux.makeSpawn")(function* () {
   });
 });
 
-export function makeHerdrLayer(): Layer.Layer<Mux> {
+export function createHerdrLayer(): Layer.Layer<Mux> {
   return Layer.effect(
     Mux,
     Effect.gen(function* () {
       const spawn = yield* makeSpawn();
+
       return Mux.of({ id: "herdr", spawn });
     }),
   ).pipe(Layer.provide(NodeFileSystemLayer));
 }
+
+export const HerdrLayer = createHerdrLayer();

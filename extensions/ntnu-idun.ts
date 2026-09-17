@@ -1,20 +1,19 @@
 import { createProvider, type Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Schema } from "effect";
 
 const PROVIDER_ID = "ntnu-idun";
+
 const BASE_URL = "https://llm.hpc.ntnu.no/v1";
 
 const DEFAULT_CONTEXT_WINDOW = 131072;
+
 const DEFAULT_MAX_TOKENS = 32768;
 
-interface ModelsResponse {
-  data?: unknown;
-}
-
-function isModelsResponse(value: unknown): value is ModelsResponse {
-  return typeof value === "object" && value !== null && "data" in value;
-}
+const ModelsResponseSchema = Schema.Struct({
+  data: Schema.Array(Schema.Struct({ id: Schema.String })),
+});
 
 // SIMPLIFIED: heuristic vision detection — IDUN's /v1/models exposes no capability
 // metadata, so multimodal support is inferred from the model ID. Covers explicit
@@ -56,25 +55,16 @@ async function fetchIdunModels(
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
     signal,
   });
+
   if (!response.ok)
     throw new Error(`IDUN model request failed: HTTP ${response.status} ${await response.text()}`);
 
-  const payload: unknown = await response.json();
-  if (!isModelsResponse(payload) || !Array.isArray(payload.data)) {
-    throw new Error("IDUN returned an invalid model list");
-  }
+  const payload = Schema.decodeUnknownSync(ModelsResponseSchema)(await response.json());
 
-  return payload.data.flatMap((entry): Model<"openai-completions">[] => {
-    if (
-      typeof entry !== "object" ||
-      entry === null ||
-      !("id" in entry) ||
-      typeof entry.id !== "string"
-    )
-      return [];
+  return payload.data.flatMap((entry): Model<"openai-completions">[] =>
     // Embedding models are exposed by /models but cannot be used for chat completions.
-    return entry.id.toLowerCase().includes("embedding") ? [] : [modelFromId(entry.id)];
-  });
+    entry.id.toLowerCase().includes("embedding") ? [] : [modelFromId(entry.id)],
+  );
 }
 
 export default function (pi: ExtensionAPI) {
@@ -94,8 +84,10 @@ export default function (pi: ExtensionAPI) {
                 placeholder: "sk-...",
               })
             ).trim();
+
             if (!key) throw new Error("No API token entered");
             await fetchIdunModels(key, interaction.signal);
+
             return { type: "api_key", key };
           },
           check: async ({ credential }) =>
@@ -110,6 +102,7 @@ export default function (pi: ExtensionAPI) {
       models: [],
       fetchModels: async ({ credential, signal }) => {
         if (credential?.type !== "api_key" || !credential.key) return [];
+
         return fetchIdunModels(credential.key, signal);
       },
       api: openAICompletionsApi(),

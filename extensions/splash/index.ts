@@ -16,6 +16,7 @@ const tauLogo = ["████████", "   ██   ", "   ██   ", "  
 function center(line: string, width: number): string {
   const trimmedLine = line.trimEnd();
   const padding = Math.max(0, Math.floor((width - visibleWidth(trimmedLine)) / 2));
+
   return truncateToWidth(`${" ".repeat(padding)}${line}`, width);
 }
 

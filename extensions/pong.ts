@@ -4,8 +4,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const BOARD_WIDTH = 40;
+
 const BOARD_HEIGHT = 16;
+
 const PADDLE_HEIGHT = 4;
+
 const TICK_MS = 100;
 
 type Styles = {
@@ -68,7 +71,9 @@ class PongComponent {
 
     // The opponent is intentionally simple: move one cell toward the ball.
     const opponentCenter = state.opponentY + PADDLE_HEIGHT / 2;
+
     if (opponentCenter < state.ballY) state.opponentY++;
+
     if (opponentCenter > state.ballY) state.opponentY--;
     state.opponentY = Math.max(0, Math.min(BOARD_HEIGHT - PADDLE_HEIGHT, state.opponentY));
 
@@ -84,6 +89,7 @@ class PongComponent {
 
     const playerHit =
       nextX === 1 && state.velocityX < 0 && this.paddleContains(state.playerY, state.ballY);
+
     const opponentHit =
       nextX === BOARD_WIDTH - 2 &&
       state.velocityX > 0 &&
@@ -92,10 +98,12 @@ class PongComponent {
     if (playerHit || opponentHit) {
       state.velocityX *= -1;
       state.ballX += state.velocityX;
+
       return;
     }
 
     state.ballX = nextX;
+
     if (state.ballX < 0) {
       state.opponentScore++;
       this.resetBall(1);
@@ -119,6 +127,7 @@ class PongComponent {
   handleInput(data: string): void {
     if (data === "q" || data === "Q") {
       this.close();
+
       return;
     }
 
@@ -153,9 +162,13 @@ class PongComponent {
 
     for (let y = 0; y < BOARD_HEIGHT; y++) {
       const row = Array.from({ length: BOARD_WIDTH }, () => " ");
+
       if (y % 2 === 0) row[Math.floor(BOARD_WIDTH / 2)] = dim("┊");
+
       if (this.paddleContains(state.playerY, y)) row[1] = this.styles.paddle("█");
+
       if (this.paddleContains(state.opponentY, y)) row[BOARD_WIDTH - 2] = this.styles.paddle("█");
+
       if (state.ballY === y && state.ballX >= 0 && state.ballX < BOARD_WIDTH)
         row[state.ballX] = this.styles.ball("●");
       lines.push(boardLine(row.join("")));
@@ -167,6 +180,7 @@ class PongComponent {
 
     this.cachedLines = lines;
     this.cachedVersion = this.version;
+
     return lines;
   }
 
@@ -177,6 +191,7 @@ class PongComponent {
 
   private fit(line: string, width: number): string {
     const fitted = truncateToWidth(line, Math.max(0, width), "");
+
     return fitted + " ".repeat(Math.max(0, width - visibleWidth(fitted)));
   }
 
@@ -194,6 +209,7 @@ export default function (pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Pong requires interactive mode", "error");
+
         return;
       }
 

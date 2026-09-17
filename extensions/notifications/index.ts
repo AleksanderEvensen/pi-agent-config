@@ -8,6 +8,7 @@ function playDoneSound(): void {
     detached: true,
     stdio: "ignore",
   });
+
   child.on("error", () => {});
   child.unref();
 }

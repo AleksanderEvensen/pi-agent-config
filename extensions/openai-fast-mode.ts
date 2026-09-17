@@ -7,6 +7,7 @@ import { Effect, Schema } from "effect";
 import { decodeJson } from "../lib/effect.ts";
 
 const SERVICE_TIER = "priority";
+
 const CONFIG_PATH = join(getAgentDir(), "openai-fast-mode.json");
 
 const OpenAIServiceTierPayloadSchema = Schema.Union([
@@ -21,14 +22,17 @@ const OpenAIServiceTierPayloadSchema = Schema.Union([
     messages: Schema.Array(Schema.Unknown),
   }),
 ]);
+
 const FastModeConfigSchema = Schema.Struct({ enabled: Schema.Boolean });
 
 function isNativeOpenAIModel(model: ExtensionContext["model"]): boolean {
   if (!model) return false;
 
   const isOpenAIProvider = model.provider === "openai" || model.provider === "openai-codex";
+
   const isOpenAIBaseUrl =
     model.baseUrl.includes("api.openai.com") || model.baseUrl.includes("chatgpt.com/backend-api");
+
   const isOpenAIAPI =
     model.api === "openai-responses" ||
     model.api === "openai-codex-responses" ||
@@ -41,9 +45,11 @@ function loadEnabled(): boolean {
   if (!existsSync(CONFIG_PATH)) return false;
 
   try {
-    return Effect.runSync(decodeJson(FastModeConfigSchema, readFileSync(CONFIG_PATH, "utf8"))).enabled;
+    return Effect.runSync(decodeJson(FastModeConfigSchema, readFileSync(CONFIG_PATH, "utf8")))
+      .enabled;
   } catch (error) {
     console.error(`[openai-fast-mode] Failed to read ${CONFIG_PATH}:`, errorMessage(error));
+
     return false;
   }
 }
@@ -59,11 +65,17 @@ function saveEnabled(enabled: boolean): void {
 
 function parseToggleArg(args: string): "on" | "off" | "toggle" | "status" | undefined {
   const value = args.trim().toLowerCase();
+
   if (!value) return "toggle";
+
   if (["on", "enable", "enabled", "true", "1"].includes(value)) return "on";
+
   if (["off", "disable", "disabled", "false", "0"].includes(value)) return "off";
+
   if (["toggle", "switch"].includes(value)) return "toggle";
+
   if (["status", "show"].includes(value)) return "status";
+
   return undefined;
 }
 
@@ -74,6 +86,7 @@ export default function (pi: ExtensionAPI) {
     const label = enabled
       ? ctx.ui.theme.fg("accent", "⚡ fast:on")
       : ctx.ui.theme.fg("dim", "⚡ fast:off");
+
     ctx.ui.setStatus("openai-fast-mode", label);
   }
 
@@ -93,20 +106,24 @@ export default function (pi: ExtensionAPI) {
     description: "Toggle OpenAI fast mode (priority service tier)",
     getArgumentCompletions: (prefix) => {
       const options = ["on", "off", "toggle", "status"];
-      return options
-        .filter((option) => option.startsWith(prefix.toLowerCase()))
-        .map((option) => ({ value: option, label: option }));
+
+      return options.flatMap((option) =>
+        option.startsWith(prefix.toLowerCase()) ? [{ value: option, label: option }] : [],
+      );
     },
     handler: async (args, ctx) => {
       const action = parseToggleArg(args);
+
       if (!action) {
         ctx.ui.notify("Usage: /fast-mode [on|off|toggle|status]", "warning");
+
         return;
       }
 
       if (action === "status") {
         ctx.ui.notify(`OpenAI fast mode is ${enabled ? "enabled" : "disabled"}.`, "info");
         updateStatus(ctx);
+
         return;
       }
 
@@ -116,6 +133,7 @@ export default function (pi: ExtensionAPI) {
       const modelNote = isNativeOpenAIModel(ctx.model)
         ? ""
         : " Current model is not a native OpenAI model, so this will apply after switching to one.";
+
       ctx.ui.notify(
         `OpenAI fast mode ${enabled ? "enabled" : "disabled"}.${enabled ? modelNote : ""}`,
         "info",
@@ -127,6 +145,7 @@ export default function (pi: ExtensionAPI) {
     if (pi.getFlag("fast-mode") === true) {
       enabled = true;
     }
+
     updateStatus(ctx);
   });
 
@@ -136,7 +155,9 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("before_provider_request", (event, ctx) => {
     if (!enabled) return;
+
     if (!isNativeOpenAIModel(ctx.model)) return;
+
     if (!Schema.is(OpenAIServiceTierPayloadSchema)(event.payload)) return;
 
     return {

@@ -7,13 +7,9 @@
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "allowImportingTsExtensions": true,
     "noImplicitAny": false
   },
-  "include": [
-    "extensions/**/*.ts"
-  ]
+  "include": ["extensions/**/*.ts"]
 }

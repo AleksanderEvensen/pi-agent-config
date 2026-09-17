@@ -27,6 +27,12 @@ import subagents, {
 } from "./index.ts";
 import { herdrCommandLine, herdrScriptCommand } from "./mux/herdr.ts";
 
+function testDouble<T, V = unknown>(value: V): T {
+  // SAFETY: test doubles intentionally implement only the members exercised by each test.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions
+  return value as unknown as T;
+}
+
 const agent = {
   name: "scout",
   description: "Scout",
@@ -66,11 +72,13 @@ function assistant(
 
 test("agent discovery can be replaced without touching the filesystem", async () => {
   const calls: Array<readonly [string, boolean]> = [];
+
   const testLayer = Layer.succeed(
     AgentDiscovery,
     AgentDiscovery.of({
       discover: (cwd, includeProjectAgents) => {
         calls.push([cwd, includeProjectAgents]);
+
         return Effect.succeed({ agents: [agent], invalid: [] });
       },
     }),
@@ -126,11 +134,14 @@ test("reload-agents refreshes valid configurations and shows their source paths"
   process.env.HERDR_PANE_ID = "w1:p1";
 
   type CommandHandler = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
-  type ShutdownHandler = (event: SessionShutdownEvent, ctx: ExtensionContext) => unknown;
+
+  type ShutdownHandler = (event: SessionShutdownEvent, ctx: ExtensionContext) => void;
+
   const commands = new Map<string, CommandHandler>();
   let shutdown: ShutdownHandler | undefined;
   let activeTools = ["read"];
   let widgetLines: string[] = [];
+
   const configuredTools = [
     "read",
     "grep",
@@ -144,7 +155,9 @@ test("reload-agents refreshes valid configurations and shows their source paths"
     "source_check",
     "get_search_content",
   ];
-  const pi = {
+
+  // SAFETY: this test double implements only the API members exercised here.
+  const pi = testDouble<ExtensionAPI>({
     registerTool: () => {},
     registerCommand: (name: string, options: { handler: CommandHandler }) =>
       commands.set(name, options.handler),
@@ -156,8 +169,11 @@ test("reload-agents refreshes valid configurations and shows their source paths"
     setActiveTools: (names: string[]) => {
       activeTools = names;
     },
-  } as unknown as ExtensionAPI;
-  const ctx = {
+    // SAFETY: this test double implements only the API members exercised here.
+  });
+
+  // SAFETY: this test double implements only the context members exercised here.
+  const ctx = testDouble<ExtensionCommandContext>({
     cwd: "/home/alekshse",
     isProjectTrusted: () => false,
     modelRegistry: {
@@ -173,7 +189,8 @@ test("reload-agents refreshes valid configurations and shows their source paths"
       },
       notify: () => {},
     },
-  } as unknown as ExtensionCommandContext;
+    // SAFETY: this test double implements only the context members exercised here.
+  });
 
   try {
     subagents(pi);
@@ -190,8 +207,10 @@ test("reload-agents refreshes valid configurations and shows their source paths"
   } finally {
     if (previousHerdrEnv === undefined) delete process.env.HERDR_ENV;
     else process.env.HERDR_ENV = previousHerdrEnv;
+
     if (previousSocket === undefined) delete process.env.HERDR_SOCKET_PATH;
     else process.env.HERDR_SOCKET_PATH = previousSocket;
+
     if (previousPane === undefined) delete process.env.HERDR_PANE_ID;
     else process.env.HERDR_PANE_ID = previousPane;
   }
@@ -260,6 +279,7 @@ test("creates and updates a durable run archive", async () => {
 });
 
 test("archives messages and reports the final settled assistant response", async () => {
+  // SAFETY: the following test double implements only the event API exercised here.
   const id = randomUUID();
   const resultPath = join(tmpdir(), `pi-subagent-result-test-${id}.json`);
   const transcriptPath = join(tmpdir(), `pi-subagent-transcript-test-${id}.jsonl`);
@@ -271,13 +291,20 @@ test("archives messages and reports the final settled assistant response", async
   process.env.PI_SUBAGENT_AUTO_EXIT = "1";
 
   type ChildEvent = AgentEndEvent | AgentSettledEvent | MessageEndEvent;
-  const handlers = new Map<string, (event: ChildEvent, ctx: ExtensionContext) => unknown>();
+
+  const handlers = new Map<string, (event: ChildEvent, ctx: ExtensionContext) => void>();
   let shutdowns = 0;
-  const pi = {
-    on: (name: string, handler: (event: ChildEvent, ctx: ExtensionContext) => unknown) =>
+
+  // SAFETY: this test double implements only the API members exercised here.
+  const pi = testDouble<ExtensionAPI>({
+    on: (name: string, handler: (event: ChildEvent, ctx: ExtensionContext) => void) =>
       handlers.set(name, handler),
-  } as unknown as ExtensionAPI;
-  const ctx = { shutdown: () => shutdowns++ } as unknown as ExtensionContext;
+    // SAFETY: this test double implements only the API members exercised here.
+  });
+
+  // SAFETY: this test double implements only shutdown, which is the sole member used here.
+  // SAFETY: this test double implements only the context members exercised here.
+  const ctx = testDouble<ExtensionContext>({ shutdown: () => shutdowns++ });
   const intermediate = assistant("Working", "toolUse");
   const final = assistant("Recovered final report");
 
@@ -292,10 +319,12 @@ test("archives messages and reports the final settled assistant response", async
       text: "Recovered final report",
       isError: false,
     });
+
     const records = (await readFile(transcriptPath, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
+
     assert.equal(records.length, 2);
     assert.equal(records[0].index, 0);
     assert.equal(records[1].message.content[0].text, "Recovered final report");
@@ -303,8 +332,10 @@ test("archives messages and reports the final settled assistant response", async
   } finally {
     if (previousResultPath === undefined) delete process.env.PI_SUBAGENT_RESULT_PATH;
     else process.env.PI_SUBAGENT_RESULT_PATH = previousResultPath;
+
     if (previousTranscriptPath === undefined) delete process.env.PI_SUBAGENT_TRANSCRIPT_PATH;
     else process.env.PI_SUBAGENT_TRANSCRIPT_PATH = previousTranscriptPath;
+
     if (previousAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
     else process.env.PI_SUBAGENT_AUTO_EXIT = previousAutoExit;
     await rm(resultPath, { force: true });
@@ -314,6 +345,7 @@ test("archives messages and reports the final settled assistant response", async
 });
 
 test("reports an empty terminal response as an error with substantive fallback text", async () => {
+  // SAFETY: the following test double implements only the event API exercised here.
   const resultPath = join(tmpdir(), `pi-subagent-result-test-${randomUUID()}.json`);
   const previousResultPath = process.env.PI_SUBAGENT_RESULT_PATH;
   const previousAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
@@ -321,13 +353,20 @@ test("reports an empty terminal response as an error with substantive fallback t
   process.env.PI_SUBAGENT_AUTO_EXIT = "1";
 
   type ChildEvent = AgentEndEvent | AgentSettledEvent | MessageEndEvent;
-  const handlers = new Map<string, (event: ChildEvent, ctx: ExtensionContext) => unknown>();
+
+  const handlers = new Map<string, (event: ChildEvent, ctx: ExtensionContext) => void>();
   let shutdowns = 0;
-  const pi = {
-    on: (name: string, handler: (event: ChildEvent, ctx: ExtensionContext) => unknown) =>
+
+  // SAFETY: this test double implements only the API members exercised here.
+  const pi = testDouble<ExtensionAPI>({
+    on: (name: string, handler: (event: ChildEvent, ctx: ExtensionContext) => void) =>
       handlers.set(name, handler),
-  } as unknown as ExtensionAPI;
-  const ctx = { shutdown: () => shutdowns++ } as unknown as ExtensionContext;
+    // SAFETY: this test double implements only the API members exercised here.
+  });
+
+  // SAFETY: this test double implements only shutdown, which is the sole member used here.
+  // SAFETY: this test double implements only the context members exercised here.
+  const ctx = testDouble<ExtensionContext>({ shutdown: () => shutdowns++ });
   const substantive = assistant("Partial report", "toolUse");
   const empty = assistant("");
 
@@ -346,6 +385,7 @@ test("reports an empty terminal response as an error with substantive fallback t
   } finally {
     if (previousResultPath === undefined) delete process.env.PI_SUBAGENT_RESULT_PATH;
     else process.env.PI_SUBAGENT_RESULT_PATH = previousResultPath;
+
     if (previousAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
     else process.env.PI_SUBAGENT_AUTO_EXIT = previousAutoExit;
     await rm(resultPath, { force: true });

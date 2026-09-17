@@ -26,6 +26,8 @@ export type AgentDiscoveryResult = {
   readonly invalid: readonly InvalidAgentConfig[];
 };
 
+type ParsedFrontmatter = Record<string, string | boolean | undefined>;
+
 const AgentFrontmatter = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
@@ -39,17 +41,24 @@ const AgentFrontmatter = Schema.Struct({
 });
 
 function toolNames(value: string | readonly string[] | undefined): string[] {
-  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  const values = Array.isArray(value)
+    ? value
+    : Schema.is(Schema.String)(value)
+      ? value.split(",")
+      : [];
+
   return values.map((value) => value.trim()).filter(Boolean);
 }
 
 const loadAgent = Effect.fn("AgentDiscovery.loadAgent")(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const content = yield* fs.readFileString(filePath);
+
   const parsed = yield* Effect.try({
-    try: () => parseFrontmatter<Record<string, unknown>>(content),
+    try: () => parseFrontmatter<ParsedFrontmatter>(content),
     catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   });
+
   const frontmatter = yield* Schema.decodeUnknownEffect(AgentFrontmatter)(parsed.frontmatter);
 
   return {
@@ -69,10 +78,12 @@ const loadDirectory = Effect.fn("AgentDiscovery.loadDirectory")(function* (direc
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const entries = yield* fs.readDirectory(directory).pipe(Effect.catch(() => Effect.succeed([])));
+
   const loaded = yield* Effect.forEach(
     entries.filter((entry) => entry.endsWith(".md")),
     (entry) => {
       const filePath = path.join(directory, entry);
+
       return loadAgent(filePath).pipe(
         Effect.map((agent) => ({ agent, invalid: undefined })),
         Effect.catch((cause) =>
@@ -88,6 +99,7 @@ const loadDirectory = Effect.fn("AgentDiscovery.loadDirectory")(function* (direc
     },
     { concurrency: "unbounded" },
   );
+
   return {
     agents: loaded.flatMap(({ agent }) => (agent ? [agent] : [])),
     invalid: loaded.flatMap(({ invalid }) => (invalid ? [invalid] : [])),
@@ -103,9 +115,11 @@ const nearestProjectAgentDirectory = Effect.fn("AgentDiscovery.nearestProjectAge
     while (true) {
       const candidate = path.join(directory, CONFIG_DIR_NAME, "agents");
       const info = yield* Effect.option(fs.stat(candidate));
+
       if (Option.isSome(info) && info.value.type === "Directory") return Option.some(candidate);
 
       const parent = path.dirname(directory);
+
       if (parent === directory) return Option.none<string>();
       directory = parent;
     }
@@ -138,8 +152,10 @@ export const AgentDiscoveryLayer = Layer.effect(
 
       if (includeProjectAgents) {
         const projectDirectory = yield* nearestProjectAgentDirectory(cwd);
+
         if (Option.isSome(projectDirectory)) {
           const project = yield* loadDirectory(projectDirectory.value);
+
           for (const agent of project.agents) agents.set(agent.name, agent);
           invalid.push(...project.invalid);
         }
@@ -163,6 +179,7 @@ export const AgentDiscoveryLive = AgentDiscoveryLayer.pipe(Layer.provide(NodeSer
 export const discoverAgentConfigurations = Effect.fn("AgentDiscovery.discoverConfigurations")(
   function* (cwd: string, includeProjectAgents: boolean) {
     const discovery = yield* AgentDiscovery;
+
     return yield* discovery.discover(cwd, includeProjectAgents);
   },
 );
@@ -172,5 +189,6 @@ export const discoverAgents = Effect.fn("AgentDiscovery.discover")(function* (
   includeProjectAgents: boolean,
 ) {
   const result = yield* discoverAgentConfigurations(cwd, includeProjectAgents);
+
   return result.agents;
 });

@@ -27,6 +27,7 @@ const BLOCK_REASON =
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", (event) => {
     if (!isToolCallEventType("bash", event)) return;
+
     if (!event.input.command.includes("git")) return;
 
     if (NO_VERIFY_RE.test(event.input.command)) {

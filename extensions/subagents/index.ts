@@ -41,6 +41,7 @@ export function validateAgentConfigurations(
 
   for (const agent of discovery.agents) {
     const reasons: string[] = [];
+
     if (!agent.model) {
       reasons.push("model is required");
     } else if (
@@ -50,7 +51,9 @@ export function validateAgentConfigurations(
     ) {
       reasons.push(`model ${JSON.stringify(agent.model)} is not available`);
     }
+
     const missingTools = agent.tools.filter((tool) => !availableTools.has(tool));
+
     if (missingTools.length > 0)
       reasons.push(`tools are not available: ${missingTools.join(", ")}`);
 
@@ -73,13 +76,17 @@ const SubagentParameters = Type.Object({
   }),
 });
 
-function piInvocation(args: readonly string[]): { command: string; args: string[] } {
+type PiInvocation = { command: string; args: string[] };
+
+function piInvocation(args: readonly string[]): PiInvocation {
   const script = process.argv[1];
+
   if (script && !script.startsWith("/$bunfs/root/") && existsSync(script)) {
     return { command: process.execPath, args: [script, ...args] };
   }
 
   const executable = basename(process.execPath).toLowerCase();
+
   return /^(node|bun)(\.exe)?$/.test(executable)
     ? { command: "pi", args: [...args] }
     : { command: process.execPath, args: [...args] };
@@ -87,16 +94,22 @@ function piInvocation(args: readonly string[]): { command: string; args: string[
 
 export function agentArguments(agent: AgentConfig, name: string, task: string): string[] {
   const args = ["--name", name, "--no-session", "--extension", CHILD_EXTENSION_PATH];
+
   if (agent.model) args.push("--model", agent.model);
+
   if (agent.thinking) args.push("--thinking", agent.thinking);
+
   if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+
   if (agent.systemPrompt) {
     args.push(
       agent.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt",
       agent.systemPrompt,
     );
   }
+
   args.push("--", task);
+
   return args;
 }
 
@@ -122,11 +135,14 @@ function registerSubagentTool(
 
       const discovery = await getDiscovery(ctx);
       const agent = discovery.agents.find((candidate) => candidate.name === params.agent);
+
       if (!agent) {
         const invalid = discovery.invalid.find((candidate) => candidate.name === params.agent);
+
         const available = discovery.agents
           .map(({ name, description }) => `${name}: ${description}`)
           .join("; ");
+
         throw new Error(
           invalid
             ? `Agent ${JSON.stringify(params.agent)} is invalid: ${invalid.reason} (${invalid.filePath})`
@@ -136,6 +152,7 @@ function registerSubagentTool(
 
       const availableTools = new Set(pi.getAllTools().map((tool) => tool.name));
       const missingTools = agent.tools.filter((tool) => !availableTools.has(tool));
+
       if (missingTools.length > 0) {
         throw new Error(
           `Agent ${JSON.stringify(agent.name)} requests unavailable tools: ${missingTools.join(", ")}`,
@@ -151,10 +168,12 @@ function registerSubagentTool(
 
       const invocation = piInvocation(agentArguments(agent, params.name, params.task));
       let result: { paneId: string };
+
       try {
         result = await Effect.runPromise(
           Effect.gen(function* () {
             const mux = yield* Mux;
+
             return yield* mux.spawn({
               name: params.name,
               cwd: ctx.cwd,
@@ -176,6 +195,7 @@ function registerSubagentTool(
         });
         throw error;
       }
+
       await updateRunMetadata(metadataPath, { status: "running", paneId: result.paneId });
 
       const watcher = new AbortController();
@@ -213,9 +233,9 @@ function registerSubagentTool(
             { deliverAs: "followUp", triggerTurn: true },
           );
         })
-        .catch((error: unknown) => {
+        .catch((cause) => {
           if (watcher.signal.aborted) return;
-          const message = errorMessage(error);
+          const message = errorMessage(cause);
           void updateRunMetadata(metadataPath, { status: "failed", error: message }).catch(
             () => {},
           );
@@ -264,6 +284,7 @@ function registerSubagentTool(
 
 export default function subagents(pi: ExtensionAPI): void {
   const muxLayer = Option.getOrUndefined(detectMux());
+
   if (!muxLayer) return;
 
   const widgetId = "subagent-discovery";
@@ -278,11 +299,13 @@ export default function subagents(pi: ExtensionAPI): void {
         Effect.provide(AgentDiscoveryLive),
       ),
     );
+
     discovery = validateAgentConfigurations(
       discovered,
       ctx.modelRegistry.getAvailable(),
       new Set(pi.getAllTools().map((tool) => tool.name)),
     );
+
     return discovery;
   };
 
@@ -294,6 +317,7 @@ export default function subagents(pi: ExtensionAPI): void {
       registerSubagentTool(pi, muxLayer, getDiscovery, watchers);
       subagentRegistered = true;
     }
+
     pi.setActiveTools([...new Set([...pi.getActiveTools(), "subagent", "subagent_history"])]);
   };
 
@@ -321,6 +345,7 @@ export default function subagents(pi: ExtensionAPI): void {
   pi.on("session_shutdown", (_event, ctx) => {
     for (const watcher of watchers) watcher.abort();
     watchers.clear();
+
     if (widgetTimer) clearTimeout(widgetTimer);
     widgetTimer = undefined;
     ctx.ui.setWidget(widgetId, undefined);

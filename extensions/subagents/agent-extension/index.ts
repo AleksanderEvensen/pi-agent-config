@@ -8,6 +8,7 @@ export const SubagentResult = Schema.Struct({
 });
 
 type AgentMessage = AgentEndEvent["messages"][number];
+
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 
 function assistantText(message: AssistantMessage): string {
@@ -25,6 +26,7 @@ function findLastMatching(
   for (let index = messages.length - 1; index >= 0; index--) {
     if (predicate(messages[index])) return messages[index];
   }
+
   return undefined;
 }
 
@@ -40,6 +42,7 @@ export default function subagentChild(pi: ExtensionAPI): void {
 
   pi.on("message_end", (event) => {
     if (event.message.role === "assistant") assistantMessages.push(event.message);
+
     if (!transcriptPath) return;
 
     const record = JSON.stringify({
@@ -47,6 +50,7 @@ export default function subagentChild(pi: ExtensionAPI): void {
       timestamp: new Date().toISOString(),
       message: event.message,
     });
+
     transcriptWrites = transcriptWrites.then(() =>
       runWithNodeServices(
         Effect.gen(function* () {
@@ -70,8 +74,10 @@ export default function subagentChild(pi: ExtensionAPI): void {
     const fallbackAssistants = lastRunMessages.filter(
       (message): message is AssistantMessage => message.role === "assistant",
     );
+
     const candidates = assistantMessages.length > 0 ? assistantMessages : fallbackAssistants;
     const terminal = findLastMatching(candidates, (message) => message.stopReason !== "aborted");
+
     if (!terminal) return;
 
     let text = assistantText(terminal) || terminal.errorMessage || "";
@@ -82,6 +88,7 @@ export default function subagentChild(pi: ExtensionAPI): void {
         candidates,
         (message) => message.stopReason !== "aborted" && assistantText(message).length > 0,
       );
+
       const fallbackText = substantive ? assistantText(substantive) : "";
       text = fallbackText
         ? `Subagent settled without a textual final response. Last substantive assistant message:\n\n${fallbackText}`

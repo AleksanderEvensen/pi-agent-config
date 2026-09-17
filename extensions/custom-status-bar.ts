@@ -5,21 +5,28 @@ import { dim, hex, rgb } from "ansis";
 import os from "node:os";
 
 const orange = hex("#ff9e00");
+
 const blue = hex("#6cb6ff");
 
 function displayCwd(cwd: string): string {
   const home = os.homedir();
 
   if (cwd === home) return "~/";
+
   if (cwd.startsWith(`${home}`)) return `~${cwd.slice(home.length)}`;
+
   return cwd;
 }
 
 function shortNumber(value: number): string {
   const abs = Math.abs(value);
+
   if (abs >= 1_000_000_000) return `${trim(value / 1_000_000_000)}B`;
+
   if (abs >= 1_000_000) return `${trim(value / 1_000_000)}M`;
+
   if (abs >= 1_000) return `${trim(value / 1_000)}k`;
+
   return `${Math.round(value)}`;
 }
 
@@ -35,6 +42,7 @@ function contextColor(percent: number | null) {
   const red = t < 0.5 ? Math.round(80 + t * 2 * 175) : 255;
   const green = t < 0.5 ? 220 : Math.round(220 - (t - 0.5) * 2 * 160);
   const blue = 80;
+
   return rgb(red, green, blue);
 }
 
@@ -54,7 +62,9 @@ function contextPercent(tokens: number | null, contextWindow: number): number | 
   return tokens !== null && contextWindow > 0 ? (tokens / contextWindow) * 100 : null;
 }
 
-function tokenStats(ctx: ExtensionContext): { input: number; output: number; cached: number } {
+type TokenStats = { input: number; output: number; cached: number };
+
+function tokenStats(ctx: ExtensionContext): TokenStats {
   let input = 0;
   let output = 0;
   let cacheRead = 0;
@@ -62,6 +72,7 @@ function tokenStats(ctx: ExtensionContext): { input: number; output: number; cac
 
   for (const entry of ctx.sessionManager.getBranch()) {
     if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+    // SAFETY: the role check above narrows this message to AssistantMessage.
     const usage = (entry.message as AssistantMessage).usage;
     input += usage?.input ?? 0;
     output += usage?.output ?? 0;
@@ -74,11 +85,13 @@ function tokenStats(ctx: ExtensionContext): { input: number; output: number; cac
 
 function ioText(ctx: ExtensionContext): string {
   const { input, output } = tokenStats(ctx);
+
   return blue`${shortNumber(input)}↓/${shortNumber(output)}↑`;
 }
 
 function cachedText(ctx: ExtensionContext): string {
   const { cached } = tokenStats(ctx);
+
   return blue`Cached: ${shortNumber(cached)}`;
 }
 
@@ -92,7 +105,7 @@ function footerParts(pi: ExtensionAPI, ctx: ExtensionContext, footerData: Footer
   const effort = pi.getThinkingLevel?.() ?? "off";
   const extensionStatuses = [...footerData.getExtensionStatuses().values()];
 
-  return [
+  const parts = [
     dim(displayCwd(ctx.cwd)),
     branch ? orange(branch) : undefined,
     model,
@@ -101,7 +114,10 @@ function footerParts(pi: ExtensionAPI, ctx: ExtensionContext, footerData: Footer
     contextText(ctx),
     cachedText(ctx),
     ioText(ctx),
-  ].filter(Boolean) as string[];
+  ];
+
+  // SAFETY: every optional branch is removed by the Boolean filter.
+  return parts.filter(Boolean) as string[];
 }
 
 function installFooter(pi: ExtensionAPI, ctx: ExtensionContext) {
@@ -119,9 +135,8 @@ function installFooter(pi: ExtensionAPI, ctx: ExtensionContext) {
 }
 
 export default function (pi: ExtensionAPI) {
-  const install = (_event: unknown, ctx: ExtensionContext) => installFooter(pi, ctx);
-  pi.on("session_start", install);
-  pi.on("model_select", install);
-  pi.on("thinking_level_select", install);
-  pi.on("message_end", install);
+  pi.on("session_start", (_event, ctx) => installFooter(pi, ctx));
+  pi.on("model_select", (_event, ctx) => installFooter(pi, ctx));
+  pi.on("thinking_level_select", (_event, ctx) => installFooter(pi, ctx));
+  pi.on("message_end", (_event, ctx) => installFooter(pi, ctx));
 }
