@@ -5,8 +5,9 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { access, mkdir, stat, writeFile } from "node:fs/promises";
+import { Effect, FileSystem } from "effect";
 import { errorMessage } from "../../lib/errors.ts";
+import { runWithNodeServices } from "../../lib/effect.ts";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -36,26 +37,24 @@ export function formatAssistantMessage(message: Pick<AssistantMessage, "content"
   return text ? callout("abstract", "Pi Agent", text.split("\n")) : "";
 }
 
-async function prepareFile(path: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+const prepareFile = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
 
-  try {
-    await access(path);
-    const info = await stat(path);
+    yield* fs.makeDirectory(dirname(path), { recursive: true });
 
-    if (!info.isFile()) throw new Error("path is not a file");
-
-    if (info.size > 0) await writeFile(path, "\n\n---\n\n", { flag: "a" });
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      await writeFile(path, "");
+    if (!(yield* fs.exists(path))) {
+      yield* fs.writeFileString(path, "");
 
       return;
     }
 
-    throw error;
-  }
-}
+    const info = yield* fs.stat(path);
+
+    if (info.type !== "File") return yield* Effect.fail(new Error("path is not a file"));
+
+    if (info.size > 0n) yield* fs.writeFileString(path, "\n\n---\n\n", { flag: "a" });
+  });
 
 function resolveCapturePath(cwd: string, rawPath: string): string {
   if (rawPath === "~") return homedir();
@@ -83,7 +82,14 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
 
     writeQueue = writeQueue
       .catch(() => undefined)
-      .then(() => writeFile(path, `${text}\n`, { flag: "a" }));
+      .then(() =>
+        runWithNodeServices(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.writeFileString(path, `${text}\n`, { flag: "a" });
+          }),
+        ),
+      );
 
     try {
       await writeQueue;
@@ -107,7 +113,7 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
       const path = resolveCapturePath(ctx.cwd, rawPath);
 
       try {
-        await prepareFile(path);
+        await runWithNodeServices(prepareFile(path));
         activePath = path;
         ctx.ui.notify(`Markdown capture linked to: ${path}`, "info");
       } catch (error) {

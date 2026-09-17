@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { dim, hex, rgb } from "ansis";
+import { Option } from "effect";
 import os from "node:os";
 
 const orange = hex("#ff9e00");
@@ -49,17 +50,30 @@ function contextColor(percent: number | null) {
 function contextText(ctx: ExtensionContext): string {
   const usage = ctx.getContextUsage();
   const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-  const tokens = usage?.tokens ?? null;
-  const percent = usage?.percent ?? contextPercent(tokens, contextWindow);
-  const percentText = percent === null ? "?%" : `${Math.round(percent)}%`;
-  const usedText = tokens === null ? "?" : shortNumber(tokens);
+  const tokens = Option.fromNullishOr(usage?.tokens);
+
+  const percent = Option.fromNullishOr(usage?.percent).pipe(
+    Option.orElse(() => contextPercent(tokens, contextWindow)),
+  );
+
+  const percentText = Option.match(percent, {
+    onNone: () => "?%",
+    onSome: (value) => `${Math.round(value)}%`,
+  });
+
+  const usedText = Option.match(tokens, { onNone: () => "?", onSome: shortNumber });
   const totalText = contextWindow > 0 ? shortNumber(contextWindow) : "?";
 
-  return contextColor(percent)`Context: ${percentText} ${usedText}/${totalText}`;
+  return contextColor(Option.getOrNull(percent))`Context: ${percentText} ${usedText}/${totalText}`;
 }
 
-function contextPercent(tokens: number | null, contextWindow: number): number | null {
-  return tokens !== null && contextWindow > 0 ? (tokens / contextWindow) * 100 : null;
+function contextPercent(
+  tokens: Option.Option<number>,
+  contextWindow: number,
+): Option.Option<number> {
+  return Option.flatMap(tokens, (value) =>
+    contextWindow > 0 ? Option.some((value / contextWindow) * 100) : Option.none(),
+  );
 }
 
 type TokenStats = { input: number; output: number; cached: number };
