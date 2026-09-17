@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
+import { errorMessage } from "../../lib/errors.ts";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -80,10 +81,7 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
       await writeQueue;
     } catch (error) {
       disable();
-      ctx.ui.notify(
-        `Could not write Markdown: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
+      ctx.ui.notify(`Could not write Markdown: ${errorMessage(error)}`, "error");
     }
   };
 
@@ -102,10 +100,7 @@ export default function linkMarkdown(pi: ExtensionAPI): void {
         activePath = path;
         ctx.ui.notify(`Markdown capture linked to: ${path}`, "info");
       } catch (error) {
-        ctx.ui.notify(
-          `Could not link Markdown file: ${error instanceof Error ? error.message : String(error)}`,
-          "error",
-        );
+        ctx.ui.notify(`Could not link Markdown file: ${errorMessage(error)}`, "error");
       }
     },
   });

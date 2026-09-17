@@ -15,6 +15,17 @@ export type AgentConfig = {
   readonly filePath: string;
 };
 
+export type InvalidAgentConfig = {
+  readonly filePath: string;
+  readonly name?: string;
+  readonly reason: string;
+};
+
+export type AgentDiscoveryResult = {
+  readonly agents: readonly AgentConfig[];
+  readonly invalid: readonly InvalidAgentConfig[];
+};
+
 const AgentFrontmatter = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
@@ -60,10 +71,27 @@ const loadDirectory = Effect.fn("AgentDiscovery.loadDirectory")(function* (direc
   const entries = yield* fs.readDirectory(directory).pipe(Effect.catch(() => Effect.succeed([])));
   const loaded = yield* Effect.forEach(
     entries.filter((entry) => entry.endsWith(".md")),
-    (entry) => Effect.option(loadAgent(path.join(directory, entry))),
+    (entry) => {
+      const filePath = path.join(directory, entry);
+      return loadAgent(filePath).pipe(
+        Effect.map((agent) => ({ agent, invalid: undefined })),
+        Effect.catch((cause) =>
+          Effect.succeed({
+            agent: undefined,
+            invalid: {
+              filePath,
+              reason: String(cause),
+            } satisfies InvalidAgentConfig,
+          }),
+        ),
+      );
+    },
     { concurrency: "unbounded" },
   );
-  return loaded.filter(Option.isSome).map((agent) => agent.value);
+  return {
+    agents: loaded.flatMap(({ agent }) => (agent ? [agent] : [])),
+    invalid: loaded.flatMap(({ invalid }) => (invalid ? [invalid] : [])),
+  } satisfies AgentDiscoveryResult;
 });
 
 const nearestProjectAgentDirectory = Effect.fn("AgentDiscovery.nearestProjectAgentDirectory")(
@@ -90,7 +118,7 @@ export class AgentDiscovery extends Context.Service<
     readonly discover: (
       cwd: string,
       includeProjectAgents: boolean,
-    ) => Effect.Effect<readonly AgentConfig[]>;
+    ) => Effect.Effect<AgentDiscoveryResult>;
   }
 >()("pi/subagents/AgentDiscovery") {}
 
@@ -104,19 +132,20 @@ export const AgentDiscoveryLayer = Layer.effect(
       cwd: string,
       includeProjectAgents: boolean,
     ) {
-      const globalAgents = yield* loadDirectory(path.join(getAgentDir(), "agents"));
-      const agents = new Map(globalAgents.map((agent) => [agent.name, agent]));
+      const global = yield* loadDirectory(path.join(getAgentDir(), "agents"));
+      const agents = new Map(global.agents.map((agent) => [agent.name, agent]));
+      const invalid = [...global.invalid];
 
       if (includeProjectAgents) {
         const projectDirectory = yield* nearestProjectAgentDirectory(cwd);
         if (Option.isSome(projectDirectory)) {
-          for (const agent of yield* loadDirectory(projectDirectory.value)) {
-            agents.set(agent.name, agent);
-          }
+          const project = yield* loadDirectory(projectDirectory.value);
+          for (const agent of project.agents) agents.set(agent.name, agent);
+          invalid.push(...project.invalid);
         }
       }
 
-      return [...agents.values()];
+      return { agents: [...agents.values()], invalid } satisfies AgentDiscoveryResult;
     });
 
     const discover: AgentDiscovery["Service"]["discover"] = (cwd, includeProjectAgents) =>
@@ -131,10 +160,17 @@ export const AgentDiscoveryLayer = Layer.effect(
 
 export const AgentDiscoveryLive = AgentDiscoveryLayer.pipe(Layer.provide(NodeServices.layer));
 
+export const discoverAgentConfigurations = Effect.fn("AgentDiscovery.discoverConfigurations")(
+  function* (cwd: string, includeProjectAgents: boolean) {
+    const discovery = yield* AgentDiscovery;
+    return yield* discovery.discover(cwd, includeProjectAgents);
+  },
+);
+
 export const discoverAgents = Effect.fn("AgentDiscovery.discover")(function* (
   cwd: string,
   includeProjectAgents: boolean,
 ) {
-  const discovery = yield* AgentDiscovery;
-  return yield* discovery.discover(cwd, includeProjectAgents);
+  const result = yield* discoverAgentConfigurations(cwd, includeProjectAgents);
+  return result.agents;
 });

@@ -1,21 +1,30 @@
-import assert from "node:assert/strict";
-import test from "node:test";
 import { NodeFileSystem } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
-import { randomUUID } from "node:crypto";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   AgentEndEvent,
   AgentSettledEvent,
   ExtensionAPI,
+  ExtensionCommandContext,
   ExtensionContext,
+  MessageEndEvent,
+  SessionShutdownEvent,
 } from "@earendil-works/pi-coding-agent";
-import subagentChild from "./agent-extension/index.ts";
+import { Effect, Layer } from "effect";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
+import subagentChild from "./agent-extension/index.ts";
 import { AgentDiscovery, discoverAgents } from "./agents.ts";
-import { agentArguments, CHILD_EXTENSION_PATH, watchSubagentResult } from "./index.ts";
+import { createRunArchive, updateRunMetadata } from "./history.ts";
+import subagents, {
+  agentArguments,
+  CHILD_EXTENSION_PATH,
+  validateAgentConfigurations,
+  watchSubagentResult,
+} from "./index.ts";
 import { herdrCommandLine, herdrScriptCommand } from "./mux/herdr.ts";
 
 const agent = {
@@ -30,6 +39,31 @@ const agent = {
   filePath: "/agents/scout.md",
 };
 
+function assistant(
+  text: string,
+  stopReason: AssistantMessage["stopReason"] = "stop",
+  errorMessage?: string,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: text ? [{ type: "text", text }] : [],
+    api: "openai-responses",
+    provider: "openai",
+    model: "test",
+    stopReason,
+    errorMessage,
+    timestamp: 0,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
+}
+
 test("agent discovery can be replaced without touching the filesystem", async () => {
   const calls: Array<readonly [string, boolean]> = [];
   const testLayer = Layer.succeed(
@@ -37,7 +71,7 @@ test("agent discovery can be replaced without touching the filesystem", async ()
     AgentDiscovery.of({
       discover: (cwd, includeProjectAgents) => {
         calls.push([cwd, includeProjectAgents]);
-        return Effect.succeed([agent]);
+        return Effect.succeed({ agents: [agent], invalid: [] });
       },
     }),
   );
@@ -48,6 +82,119 @@ test("agent discovery can be replaced without touching the filesystem", async ()
 
   assert.deepEqual(result, [agent]);
   assert.deepEqual(calls, [["/project", true]]);
+});
+
+test("invalid model and tool configurations are excluded from selection", () => {
+  const result = validateAgentConfigurations(
+    {
+      agents: [
+        agent,
+        { ...agent, name: "bad-model", model: "provider/missing", filePath: "/bad-model.md" },
+        { ...agent, name: "bad-tool", tools: ["missing"], filePath: "/bad-tool.md" },
+        { ...agent, name: "inherits", model: undefined, filePath: "/inherits.md" },
+      ],
+      invalid: [{ filePath: "/broken.md", reason: "invalid frontmatter" }],
+    },
+    [{ provider: "provider", id: "model" }],
+    new Set(["read", "grep"]),
+  );
+
+  assert.deepEqual(
+    result.agents.map(({ name }) => name),
+    ["scout"],
+  );
+  assert.deepEqual(
+    result.invalid.map(({ name, filePath }) => [name, filePath]),
+    [
+      [undefined, "/broken.md"],
+      ["bad-model", "/bad-model.md"],
+      ["bad-tool", "/bad-tool.md"],
+      ["inherits", "/inherits.md"],
+    ],
+  );
+  assert.match(result.invalid[1].reason, /model .* is not available/);
+  assert.match(result.invalid[2].reason, /tools are not available: missing/);
+  assert.match(result.invalid[3].reason, /model is required/);
+});
+
+test("reload-agents refreshes valid configurations and shows their source paths", async () => {
+  const previousHerdrEnv = process.env.HERDR_ENV;
+  const previousSocket = process.env.HERDR_SOCKET_PATH;
+  const previousPane = process.env.HERDR_PANE_ID;
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = "/tmp/test-herdr.sock";
+  process.env.HERDR_PANE_ID = "w1:p1";
+
+  type CommandHandler = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+  type ShutdownHandler = (event: SessionShutdownEvent, ctx: ExtensionContext) => unknown;
+  const commands = new Map<string, CommandHandler>();
+  let shutdown: ShutdownHandler | undefined;
+  let activeTools = ["read"];
+  let widgetLines: string[] = [];
+  const configuredTools = [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "write",
+    "edit",
+    "bash",
+    "web_search",
+    "fetch_content",
+    "source_check",
+    "get_search_content",
+  ];
+  const pi = {
+    registerTool: () => {},
+    registerCommand: (name: string, options: { handler: CommandHandler }) =>
+      commands.set(name, options.handler),
+    on: (name: string, handler: ShutdownHandler) => {
+      if (name === "session_shutdown") shutdown = handler;
+    },
+    getAllTools: () => configuredTools.map((name) => ({ name })),
+    getActiveTools: () => activeTools,
+    setActiveTools: (names: string[]) => {
+      activeTools = names;
+    },
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    cwd: "/home/alekshse",
+    isProjectTrusted: () => false,
+    modelRegistry: {
+      getAvailable: () => [
+        { provider: "openai-codex", id: "gpt-5.6-luna" },
+        { provider: "openai-codex", id: "gpt-5.6-sol" },
+        { provider: "openai-codex", id: "gpt-6-sol" },
+      ],
+    },
+    ui: {
+      setWidget: (_id: string, value: string[] | undefined) => {
+        if (value) widgetLines = value;
+      },
+      notify: () => {},
+    },
+  } as unknown as ExtensionCommandContext;
+
+  try {
+    subagents(pi);
+    const reload = commands.get("reload-agents");
+    assert.ok(reload);
+    await reload("", ctx);
+
+    assert.match(widgetLines[0], /3 valid, 0 invalid/);
+    assert.ok(widgetLines.some((line) => line.includes("worker — openai-codex/gpt-5.6-sol")));
+    assert.ok(widgetLines.some((line) => line.includes("agents/worker.md")));
+    assert.ok(activeTools.includes("subagent"));
+    assert.ok(activeTools.includes("subagent_history"));
+    shutdown?.({ type: "session_shutdown", reason: "quit" }, ctx);
+  } finally {
+    if (previousHerdrEnv === undefined) delete process.env.HERDR_ENV;
+    else process.env.HERDR_ENV = previousHerdrEnv;
+    if (previousSocket === undefined) delete process.env.HERDR_SOCKET_PATH;
+    else process.env.HERDR_SOCKET_PATH = previousSocket;
+    if (previousPane === undefined) delete process.env.HERDR_PANE_ID;
+    else process.env.HERDR_PANE_ID = previousPane;
+  }
 });
 
 test("runs interactively without replacing the pane shell", () => {
@@ -69,7 +216,7 @@ test("closes an auto-exit pane only after a successful child exit", () => {
   assert.match(command, /pane kept open for inspection/);
 });
 
-test("reads and removes a validated child result", async () => {
+test("reads a validated child result without deleting the recovery copy", async () => {
   const resultPath = join(tmpdir(), `pi-subagent-result-test-${randomUUID()}.json`);
   setTimeout(
     () => void writeFile(resultPath, JSON.stringify({ text: "done", isError: false })),
@@ -83,88 +230,131 @@ test("reads and removes a validated child result", async () => {
   );
 
   assert.deepEqual(result, { text: "done", isError: false });
-  await assert.rejects(() => import("node:fs/promises").then(({ access }) => access(resultPath)));
+  await access(resultPath);
+  await rm(resultPath);
 });
 
-test("reports only the settled child result after retry or recovery", async () => {
-  const resultPath = join(tmpdir(), `pi-subagent-settled-test-${randomUUID()}.json`);
-  const previousPath = process.env.PI_SUBAGENT_RESULT_PATH;
+test("creates and updates a durable run archive", async () => {
+  const archive = await createRunArchive({
+    parentSessionId: "parent-session",
+    name: "Scout: Archive",
+    agent: "scout",
+    task: "Inspect persistence",
+  });
+
+  try {
+    const initial = JSON.parse(await readFile(archive.metadataPath, "utf8"));
+    assert.equal(initial.runId, archive.runId);
+    assert.equal(initial.status, "starting");
+    assert.equal(initial.transcriptPath, archive.transcriptPath);
+
+    await updateRunMetadata(archive.metadataPath, { status: "running", paneId: "w1:p2" });
+
+    const updated = JSON.parse(await readFile(archive.metadataPath, "utf8"));
+    assert.equal(updated.status, "running");
+    assert.equal(updated.paneId, "w1:p2");
+    assert.equal(updated.parentSessionId, "parent-session");
+  } finally {
+    await rm(archive.directory, { recursive: true, force: true });
+  }
+});
+
+test("archives messages and reports the final settled assistant response", async () => {
+  const id = randomUUID();
+  const resultPath = join(tmpdir(), `pi-subagent-result-test-${id}.json`);
+  const transcriptPath = join(tmpdir(), `pi-subagent-transcript-test-${id}.jsonl`);
+  const previousResultPath = process.env.PI_SUBAGENT_RESULT_PATH;
+  const previousTranscriptPath = process.env.PI_SUBAGENT_TRANSCRIPT_PATH;
+  const previousAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
   process.env.PI_SUBAGENT_RESULT_PATH = resultPath;
-  const handlers = new Map<
-    string,
-    (event: AgentEndEvent | AgentSettledEvent, ctx: ExtensionContext) => unknown
-  >();
+  process.env.PI_SUBAGENT_TRANSCRIPT_PATH = transcriptPath;
+  process.env.PI_SUBAGENT_AUTO_EXIT = "1";
+
+  type ChildEvent = AgentEndEvent | AgentSettledEvent | MessageEndEvent;
+  const handlers = new Map<string, (event: ChildEvent, ctx: ExtensionContext) => unknown>();
   let shutdowns = 0;
-  // Only the event registration and shutdown APIs are used by this extension.
   const pi = {
-    on: (
-      name: string,
-      handler: (event: AgentEndEvent | AgentSettledEvent, ctx: ExtensionContext) => unknown,
-    ) => handlers.set(name, handler),
+    on: (name: string, handler: (event: ChildEvent, ctx: ExtensionContext) => unknown) =>
+      handlers.set(name, handler),
   } as unknown as ExtensionAPI;
   const ctx = { shutdown: () => shutdowns++ } as unknown as ExtensionContext;
-  const message: AssistantMessage = {
-    role: "assistant",
-    content: [],
-    api: "openai-responses",
-    provider: "openai",
-    model: "test",
-    stopReason: "error",
-    errorMessage: "Temporary failure",
-    timestamp: 0,
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-  };
+  const intermediate = assistant("Working", "toolUse");
+  const final = assistant("Recovered final report");
 
   try {
     subagentChild(pi);
-    const end = handlers.get("agent_end")!;
-    const settled = handlers.get("agent_settled")!;
-    await end({ type: "agent_end", messages: [message] }, ctx);
-    await assert.rejects(access(resultPath));
-    assert.equal(shutdowns, 0);
+    await handlers.get("message_end")!({ type: "message_end", message: intermediate }, ctx);
+    await handlers.get("message_end")!({ type: "message_end", message: final }, ctx);
+    await handlers.get("agent_end")!({ type: "agent_end", messages: [intermediate, final] }, ctx);
+    await handlers.get("agent_settled")!({ type: "agent_settled" }, ctx);
 
-    await end(
-      {
-        type: "agent_end",
-        messages: [
-          { ...message, stopReason: "stop", content: [{ type: "text", text: "Recovered" }] },
-        ],
-      },
-      ctx,
-    );
-    await assert.rejects(access(resultPath));
-    await settled({ type: "agent_settled" }, ctx);
     assert.deepEqual(JSON.parse(await readFile(resultPath, "utf8")), {
-      text: "Recovered",
+      text: "Recovered final report",
       isError: false,
     });
-    assert.equal(shutdowns, 1);
-    await rm(resultPath);
-
-    await end({ type: "agent_end", messages: [message] }, ctx);
-    await settled({ type: "agent_settled" }, ctx);
-    assert.deepEqual(JSON.parse(await readFile(resultPath, "utf8")), {
-      text: "Temporary failure",
-      isError: true,
-    });
+    const records = (await readFile(transcriptPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(records.length, 2);
+    assert.equal(records[0].index, 0);
+    assert.equal(records[1].message.content[0].text, "Recovered final report");
     assert.equal(shutdowns, 1);
   } finally {
-    if (previousPath === undefined) delete process.env.PI_SUBAGENT_RESULT_PATH;
-    else process.env.PI_SUBAGENT_RESULT_PATH = previousPath;
+    if (previousResultPath === undefined) delete process.env.PI_SUBAGENT_RESULT_PATH;
+    else process.env.PI_SUBAGENT_RESULT_PATH = previousResultPath;
+    if (previousTranscriptPath === undefined) delete process.env.PI_SUBAGENT_TRANSCRIPT_PATH;
+    else process.env.PI_SUBAGENT_TRANSCRIPT_PATH = previousTranscriptPath;
+    if (previousAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
+    else process.env.PI_SUBAGENT_AUTO_EXIT = previousAutoExit;
+    await rm(resultPath, { force: true });
+    await rm(`${resultPath}.tmp`, { force: true });
+    await rm(transcriptPath, { force: true });
+  }
+});
+
+test("reports an empty terminal response as an error with substantive fallback text", async () => {
+  const resultPath = join(tmpdir(), `pi-subagent-result-test-${randomUUID()}.json`);
+  const previousResultPath = process.env.PI_SUBAGENT_RESULT_PATH;
+  const previousAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
+  process.env.PI_SUBAGENT_RESULT_PATH = resultPath;
+  process.env.PI_SUBAGENT_AUTO_EXIT = "1";
+
+  type ChildEvent = AgentEndEvent | AgentSettledEvent | MessageEndEvent;
+  const handlers = new Map<string, (event: ChildEvent, ctx: ExtensionContext) => unknown>();
+  let shutdowns = 0;
+  const pi = {
+    on: (name: string, handler: (event: ChildEvent, ctx: ExtensionContext) => unknown) =>
+      handlers.set(name, handler),
+  } as unknown as ExtensionAPI;
+  const ctx = { shutdown: () => shutdowns++ } as unknown as ExtensionContext;
+  const substantive = assistant("Partial report", "toolUse");
+  const empty = assistant("");
+
+  try {
+    subagentChild(pi);
+    await handlers.get("message_end")!({ type: "message_end", message: substantive }, ctx);
+    await handlers.get("message_end")!({ type: "message_end", message: empty }, ctx);
+    await handlers.get("agent_end")!({ type: "agent_end", messages: [substantive, empty] }, ctx);
+    await handlers.get("agent_settled")!({ type: "agent_settled" }, ctx);
+
+    const result = JSON.parse(await readFile(resultPath, "utf8"));
+    assert.equal(result.isError, true);
+    assert.match(result.text, /without a textual final response/);
+    assert.match(result.text, /Partial report/);
+    assert.equal(shutdowns, 0);
+  } finally {
+    if (previousResultPath === undefined) delete process.env.PI_SUBAGENT_RESULT_PATH;
+    else process.env.PI_SUBAGENT_RESULT_PATH = previousResultPath;
+    if (previousAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
+    else process.env.PI_SUBAGENT_AUTO_EXIT = previousAutoExit;
     await rm(resultPath, { force: true });
     await rm(`${resultPath}.tmp`, { force: true });
   }
 });
 
-test("maps agent frontmatter to an isolated Pi invocation", () => {
-  assert.deepEqual(agentArguments(agent, "Scout: Auth", "Analyze auth module"), [
+test("always loads reporting, while auto-exit remains a separate policy", () => {
+  const expected = [
     "--name",
     "Scout: Auth",
     "--no-session",
@@ -180,5 +370,11 @@ test("maps agent frontmatter to an isolated Pi invocation", () => {
     "Scout carefully.",
     "--",
     "Analyze auth module",
-  ]);
+  ];
+
+  assert.deepEqual(agentArguments(agent, "Scout: Auth", "Analyze auth module"), expected);
+  assert.deepEqual(
+    agentArguments({ ...agent, autoExit: false }, "Scout: Auth", "Analyze auth module"),
+    expected,
+  );
 });

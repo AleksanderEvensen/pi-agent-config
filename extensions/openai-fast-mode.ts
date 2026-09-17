@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { errorMessage } from "../lib/errors.ts";
 
 const SERVICE_TIER = "priority";
 const CONFIG_PATH = join(getAgentDir(), "openai-fast-mode.json");
@@ -44,7 +45,7 @@ function loadEnabled(): boolean {
     const parsed: unknown = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
     return isRecord(parsed) && parsed.enabled === true;
   } catch (error) {
-    console.error(`[openai-fast-mode] Failed to read ${CONFIG_PATH}:`, error);
+    console.error(`[openai-fast-mode] Failed to read ${CONFIG_PATH}:`, errorMessage(error));
     return false;
   }
 }
@@ -54,7 +55,7 @@ function saveEnabled(enabled: boolean): void {
     mkdirSync(getAgentDir(), { recursive: true });
     writeFileSync(CONFIG_PATH, `${JSON.stringify({ enabled }, null, 2)}\n`, "utf8");
   } catch (error) {
-    console.error(`[openai-fast-mode] Failed to write ${CONFIG_PATH}:`, error);
+    console.error(`[openai-fast-mode] Failed to write ${CONFIG_PATH}:`, errorMessage(error));
   }
 }
 

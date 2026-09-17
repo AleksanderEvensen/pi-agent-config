@@ -1,6 +1,4 @@
-# Subagent POC follow-up
+# Subagent follow-up
 
-These cases are not covered by the current WIP proof of concept:
-
-- [ ] Separate result reporting from automatic shutdown. Agents with `auto-exit: false` (the default) do not load the reporting extension, but the parent still watches for a result and promises automatic delivery. Load reporting for all children and make shutdown conditional on `auto-exit`.
-- [ ] Detect children that terminate without a result. Startup failures, crashes, or closed panes can leave the parent polling indefinitely. Monitor child/process or pane termination, report a failure when no result was produced, and clean up the watcher and temporary files.
+- [ ] Detect children that terminate before producing a result. Startup failures, crashes, or manually closed panes currently leave the parent watcher waiting until session shutdown. The archived metadata and transcript make these runs recoverable, but the parent should also monitor pane/process termination and emit a failure automatically.
+- [ ] Add an explicit retention policy for `/tmp/pi-subagent-run-*` archives if normal operating-system temporary-file cleanup is insufficient.
