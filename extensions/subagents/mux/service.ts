@@ -1,0 +1,27 @@
+import { Context, Effect, Schema } from "effect";
+
+export type SpawnRequest = {
+  readonly name: string;
+  readonly cwd: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly closeOnExit: boolean;
+};
+
+export type SpawnResult = {
+  readonly paneId: string;
+};
+
+export class MuxError extends Schema.TaggedError<MuxError>()("MuxError", {
+  mux: Schema.String,
+  message: Schema.String,
+}) {}
+
+export class Mux extends Context.Service<
+  Mux,
+  {
+    readonly id: string;
+    readonly spawn: (request: SpawnRequest) => Effect.Effect<SpawnResult, MuxError>;
+  }
+>()("pi/subagents/mux/Mux") {}

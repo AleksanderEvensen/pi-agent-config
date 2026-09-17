@@ -1,6 +1,6 @@
-import { NodeFileSystem } from "@effect/platform-node";
 import type { AgentEndEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Effect, FileSystem, Schema } from "effect";
+import { runWithNodeServices } from "../../../lib/effect.ts";
 
 export const SubagentResult = Schema.Struct({
   text: Schema.String,
@@ -48,11 +48,11 @@ export default function subagentChild(pi: ExtensionAPI): void {
       message: event.message,
     });
     transcriptWrites = transcriptWrites.then(() =>
-      Effect.runPromise(
+      runWithNodeServices(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           yield* fs.writeFileString(transcriptPath, `${record}\n`, { flag: "a", mode: 0o600 });
-        }).pipe(Effect.provide(NodeFileSystem.layer)),
+        }),
       ),
     );
   });
@@ -89,7 +89,7 @@ export default function subagentChild(pi: ExtensionAPI): void {
       isError = true;
     }
 
-    await Effect.runPromise(
+    await runWithNodeServices(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const temporaryPath = `${resultPath}.tmp`;
@@ -97,7 +97,7 @@ export default function subagentChild(pi: ExtensionAPI): void {
           mode: 0o600,
         });
         yield* fs.rename(temporaryPath, resultPath);
-      }).pipe(Effect.provide(NodeFileSystem.layer)),
+      }),
     );
 
     if (autoExit && !isError) ctx.shutdown();

@@ -1,7 +1,7 @@
-import { NodeServices } from "@effect/platform-node";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { NodeServicesLayer } from "../../lib/effect.ts";
 
 export type AgentConfig = {
   readonly name: string;
@@ -158,7 +158,7 @@ export const AgentDiscoveryLayer = Layer.effect(
   }),
 );
 
-export const AgentDiscoveryLive = AgentDiscoveryLayer.pipe(Layer.provide(NodeServices.layer));
+export const AgentDiscoveryLive = AgentDiscoveryLayer.pipe(Layer.provide(NodeServicesLayer));
 
 export const discoverAgentConfigurations = Effect.fn("AgentDiscovery.discoverConfigurations")(
   function* (cwd: string, includeProjectAgents: boolean) {

@@ -3,26 +3,25 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { errorMessage } from "../lib/errors.ts";
+import { Effect, Schema } from "effect";
+import { decodeJson } from "../lib/effect.ts";
 
 const SERVICE_TIER = "priority";
 const CONFIG_PATH = join(getAgentDir(), "openai-fast-mode.json");
 
-type OpenAIServiceTierPayload = Record<string, unknown> & {
-  model: string;
-  stream: true;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isOpenAIServiceTierPayload(payload: unknown): payload is OpenAIServiceTierPayload {
-  if (!isRecord(payload)) return false;
-  if (typeof payload.model !== "string") return false;
-  if (payload.stream !== true) return false;
-
-  return Array.isArray(payload.input) || Array.isArray(payload.messages);
-}
+const OpenAIServiceTierPayloadSchema = Schema.Union([
+  Schema.Struct({
+    model: Schema.String,
+    stream: Schema.Literal(true),
+    input: Schema.Array(Schema.Unknown),
+  }),
+  Schema.Struct({
+    model: Schema.String,
+    stream: Schema.Literal(true),
+    messages: Schema.Array(Schema.Unknown),
+  }),
+]);
+const FastModeConfigSchema = Schema.Struct({ enabled: Schema.Boolean });
 
 function isNativeOpenAIModel(model: ExtensionContext["model"]): boolean {
   if (!model) return false;
@@ -42,8 +41,7 @@ function loadEnabled(): boolean {
   if (!existsSync(CONFIG_PATH)) return false;
 
   try {
-    const parsed: unknown = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-    return isRecord(parsed) && parsed.enabled === true;
+    return Effect.runSync(decodeJson(FastModeConfigSchema, readFileSync(CONFIG_PATH, "utf8"))).enabled;
   } catch (error) {
     console.error(`[openai-fast-mode] Failed to read ${CONFIG_PATH}:`, errorMessage(error));
     return false;
@@ -139,7 +137,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_provider_request", (event, ctx) => {
     if (!enabled) return;
     if (!isNativeOpenAIModel(ctx.model)) return;
-    if (!isOpenAIServiceTierPayload(event.payload)) return;
+    if (!Schema.is(OpenAIServiceTierPayloadSchema)(event.payload)) return;
 
     return {
       ...event.payload,

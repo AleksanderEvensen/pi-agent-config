@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveCodexAuth } from "./codex-usage.ts";
+import { resolveCodexAuth } from "./index.ts";
 
 type AuthContext = Parameters<typeof resolveCodexAuth>[0];
 

@@ -13,31 +13,37 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
+import { decodeJson } from "../../lib/effect.ts";
 import { SubagentResult } from "./agent-extension/index.ts";
 
 const RUN_DIRECTORY_PREFIX = "pi-subagent-run-";
 const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type RunStatus = "starting" | "running" | "finished" | "failed";
+const RunMetadataSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  runId: Schema.String,
+  parentSessionId: Schema.String,
+  name: Schema.String,
+  agent: Schema.String,
+  task: Schema.String,
+  status: Schema.Union([
+    Schema.Literal("starting"),
+    Schema.Literal("running"),
+    Schema.Literal("finished"),
+    Schema.Literal("failed"),
+  ]),
+  startedAt: Schema.String,
+  updatedAt: Schema.String,
+  directory: Schema.String,
+  transcriptPath: Schema.String,
+  resultPath: Schema.String,
+  paneId: Schema.optional(Schema.String),
+  isError: Schema.optional(Schema.Boolean),
+  deliveryQueuedAt: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+});
 
-export type RunMetadata = {
-  readonly version: 1;
-  readonly runId: string;
-  readonly parentSessionId: string;
-  readonly name: string;
-  readonly agent: string;
-  readonly task: string;
-  readonly status: RunStatus;
-  readonly startedAt: string;
-  readonly updatedAt: string;
-  readonly directory: string;
-  readonly transcriptPath: string;
-  readonly resultPath: string;
-  readonly paneId?: string;
-  readonly isError?: boolean;
-  readonly deliveryQueuedAt?: string;
-  readonly error?: string;
-};
+export type RunMetadata = Schema.Schema.Type<typeof RunMetadataSchema>;
 
 export type RunArchive = {
   readonly runId: string;
@@ -67,44 +73,40 @@ export const watchSubagentResult = Effect.fn("Subagents.watchResult")(function* 
   const fs = yield* FileSystem.FileSystem;
   while (!signal.aborted) {
     if (yield* fs.exists(resultPath)) {
-      return yield* Schema.decodeUnknownEffect(SubagentResult)(
-        JSON.parse(yield* fs.readFileString(resultPath)),
-      );
+      return yield* decodeJson(SubagentResult, yield* fs.readFileString(resultPath));
     }
     yield* Effect.sleep("250 millis");
   }
   return yield* Effect.fail(new Error("Subagent result watcher was cancelled"));
 });
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const TranscriptPartSchema = Schema.Struct({
+  type: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
+  thinking: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  arguments: Schema.optional(Schema.Unknown),
+});
+
+const TranscriptMessageSchema = Schema.Struct({
+  role: Schema.optional(Schema.String),
+  toolName: Schema.optional(Schema.String),
+  stopReason: Schema.optional(Schema.String),
+  content: Schema.optional(Schema.Array(Schema.Unknown)),
+  errorMessage: Schema.optional(Schema.String),
+});
+
+const TranscriptRecordSchema = Schema.Struct({
+  index: Schema.optional(Schema.Number),
+  message: TranscriptMessageSchema,
+});
 
 function parseRunMetadata(raw: string): RunMetadata | undefined {
-  let value: unknown;
   try {
-    value = JSON.parse(raw);
+    return Effect.runSync(decodeJson(RunMetadataSchema, raw));
   } catch {
     return undefined;
   }
-  if (
-    !isRecord(value) ||
-    value.version !== 1 ||
-    typeof value.runId !== "string" ||
-    typeof value.parentSessionId !== "string" ||
-    typeof value.name !== "string" ||
-    typeof value.agent !== "string" ||
-    typeof value.task !== "string" ||
-    !["starting", "running", "finished", "failed"].includes(String(value.status)) ||
-    typeof value.startedAt !== "string" ||
-    typeof value.updatedAt !== "string" ||
-    typeof value.directory !== "string" ||
-    typeof value.transcriptPath !== "string" ||
-    typeof value.resultPath !== "string"
-  ) {
-    return undefined;
-  }
-  return value as RunMetadata;
 }
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
@@ -198,26 +200,24 @@ function valueString(value: unknown): string {
 }
 
 function formatTranscriptRecord(record: unknown): string {
-  if (!isRecord(record) || !isRecord(record.message)) return JSON.stringify(record, null, 2);
-  const index = typeof record.index === "number" ? record.index : "?";
-  const message = record.message;
-  const role = typeof message.role === "string" ? message.role : "unknown";
-  const toolName = typeof message.toolName === "string" ? ` · ${message.toolName}` : "";
-  const stopReason = typeof message.stopReason === "string" ? ` · ${message.stopReason}` : "";
+  if (!Schema.is(TranscriptRecordSchema)(record)) return JSON.stringify(record, null, 2);
+  const { message } = record;
+  const index = record.index ?? "?";
+  const role = message.role ?? "unknown";
+  const toolName = message.toolName ? ` · ${message.toolName}` : "";
+  const stopReason = message.stopReason ? ` · ${message.stopReason}` : "";
   const output = [`## Message ${index} · ${role}${toolName}${stopReason}`];
 
   if (Array.isArray(message.content)) {
     for (const part of message.content) {
-      if (!isRecord(part)) {
+      if (!Schema.is(TranscriptPartSchema)(part)) {
         output.push(valueString(part));
         continue;
       }
-      if (part.type === "text" && typeof part.text === "string") output.push(part.text);
-      else if (part.type === "thinking" && typeof part.thinking === "string") {
-        output.push(`[thinking]\n${part.thinking}`);
-      } else if (part.type === "toolCall") {
-        const name = typeof part.name === "string" ? part.name : "unknown";
-        output.push(`[tool call: ${name}]\n${valueString(part.arguments)}`);
+      if (part.type === "text") output.push(part.text ?? "");
+      else if (part.type === "thinking") output.push(`[thinking]\n${part.thinking ?? ""}`);
+      else if (part.type === "toolCall") {
+        output.push(`[tool call: ${part.name ?? "unknown"}]\n${valueString(part.arguments)}`);
       } else if (part.type === "image") output.push("[image]");
       else output.push(valueString(part));
     }
@@ -238,8 +238,7 @@ async function readTranscript(path: string): Promise<unknown[]> {
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        const value: unknown = JSON.parse(line);
-        return [value];
+        return [Effect.runSync(decodeJson(Schema.Unknown, line))];
       } catch {
         return [];
       }
@@ -291,7 +290,8 @@ export function registerHistoryTool(pi: ExtensionAPI): void {
       const records = await readTranscript(run.transcriptPath);
       if (params.messageIndex !== undefined) {
         const record = records.find(
-          (candidate) => isRecord(candidate) && candidate.index === params.messageIndex,
+          (candidate) =>
+            Schema.is(TranscriptRecordSchema)(candidate) && candidate.index === params.messageIndex,
         );
         if (!record) {
           throw new Error(

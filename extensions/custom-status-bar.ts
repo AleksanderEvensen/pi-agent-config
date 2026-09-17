@@ -42,15 +42,16 @@ function contextText(ctx: ExtensionContext): string {
   const usage = ctx.getContextUsage();
   const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
   const tokens = usage?.tokens ?? null;
-  const percent =
-    usage?.percent ??
-    (tokens !== null && contextWindow > 0 ? (tokens / contextWindow) * 100 : null);
-
+  const percent = usage?.percent ?? contextPercent(tokens, contextWindow);
   const percentText = percent === null ? "?%" : `${Math.round(percent)}%`;
   const usedText = tokens === null ? "?" : shortNumber(tokens);
   const totalText = contextWindow > 0 ? shortNumber(contextWindow) : "?";
 
   return contextColor(percent)`Context: ${percentText} ${usedText}/${totalText}`;
+}
+
+function contextPercent(tokens: number | null, contextWindow: number): number | null {
+  return tokens !== null && contextWindow > 0 ? (tokens / contextWindow) * 100 : null;
 }
 
 function tokenStats(ctx: ExtensionContext): { input: number; output: number; cached: number } {
@@ -81,6 +82,28 @@ function cachedText(ctx: ExtensionContext): string {
   return blue`Cached: ${shortNumber(cached)}`;
 }
 
+type FooterData = Parameters<
+  NonNullable<Parameters<NonNullable<ExtensionContext["ui"]["setFooter"]>>[0]>
+>[2];
+
+function footerParts(pi: ExtensionAPI, ctx: ExtensionContext, footerData: FooterData): string[] {
+  const branch = footerData.getGitBranch();
+  const model = ctx.model?.id ?? "no-model";
+  const effort = pi.getThinkingLevel?.() ?? "off";
+  const extensionStatuses = [...footerData.getExtensionStatuses().values()];
+
+  return [
+    dim(displayCwd(ctx.cwd)),
+    branch ? orange(branch) : undefined,
+    model,
+    `[${effort}]`,
+    ...extensionStatuses,
+    contextText(ctx),
+    cachedText(ctx),
+    ioText(ctx),
+  ].filter(Boolean) as string[];
+}
+
 function installFooter(pi: ExtensionAPI, ctx: ExtensionContext) {
   ctx.ui.setFooter((tui, _theme, footerData) => {
     const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
@@ -89,31 +112,16 @@ function installFooter(pi: ExtensionAPI, ctx: ExtensionContext) {
       dispose: unsubBranch,
       invalidate() {},
       render(width: number): string[] {
-        const branch = footerData.getGitBranch();
-        const model = ctx.model?.id ?? "no-model";
-        const effort = pi.getThinkingLevel?.() ?? "off";
-
-        const extensionStatuses = [...footerData.getExtensionStatuses().values()];
-        const parts = [
-          dim(displayCwd(ctx.cwd)),
-          branch ? orange(branch) : undefined,
-          model,
-          `[${effort}]`,
-          ...extensionStatuses,
-          contextText(ctx),
-          cachedText(ctx),
-          ioText(ctx),
-        ].filter(Boolean) as string[];
-
-        return [truncateToWidth(`  ${parts.join(" ")}`, width)];
+        return [truncateToWidth(`  ${footerParts(pi, ctx, footerData).join(" ")}`, width)];
       },
     };
   });
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("session_start", async (_event, ctx) => installFooter(pi, ctx));
-  pi.on("model_select", async (_event, ctx) => installFooter(pi, ctx));
-  pi.on("thinking_level_select", async (_event, ctx) => installFooter(pi, ctx));
-  pi.on("message_end", async (_event, ctx) => installFooter(pi, ctx));
+  const install = (_event: unknown, ctx: ExtensionContext) => installFooter(pi, ctx);
+  pi.on("session_start", install);
+  pi.on("model_select", install);
+  pi.on("thinking_level_select", install);
+  pi.on("message_end", install);
 }

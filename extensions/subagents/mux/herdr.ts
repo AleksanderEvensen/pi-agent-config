@@ -1,8 +1,8 @@
-import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Schema } from "effect";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Mux, MuxError, type SpawnRequest } from "./index.ts";
+import { decodeJson, NodeFileSystemLayer } from "../../../lib/effect.ts";
+import { Mux, MuxError, type SpawnRequest } from "./service.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,15 +53,16 @@ const makeSpawn = Effect.fn("HerdrMux.makeSpawn")(function* () {
     splitArgs.push("--no-focus");
     const split = yield* runHerdr(splitArgs);
 
-    const paneId = yield* Effect.try({
-      try: () =>
-        Schema.decodeUnknownSync(SplitResponse)(JSON.parse(split.stdout)).result.pane.pane_id,
-      catch: (cause) =>
-        new MuxError({
-          mux: "herdr",
-          message: `Invalid response from herdr pane split: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
+    const paneId = yield* decodeJson(SplitResponse, split.stdout).pipe(
+      Effect.map((response) => response.result.pane.pane_id),
+      Effect.mapError(
+        (cause) =>
+          new MuxError({
+            mux: "herdr",
+            message: `Invalid response from herdr pane split: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      ),
+    );
 
     yield* runHerdr(["pane", "rename", paneId, request.name]);
 
@@ -93,5 +94,5 @@ export function makeHerdrLayer(): Layer.Layer<Mux> {
       const spawn = yield* makeSpawn();
       return Mux.of({ id: "herdr", spawn });
     }),
-  ).pipe(Layer.provide(NodeFileSystem.layer));
+  ).pipe(Layer.provide(NodeFileSystemLayer));
 }
