@@ -13,9 +13,15 @@ export type SpawnResult = {
   readonly paneId: string;
 };
 
+export type ExitResult = {
+  readonly paneId: string;
+  readonly reason: "process-exited" | "pane-closed";
+};
+
 export class MuxError extends Schema.TaggedError<MuxError>()("MuxError", {
   mux: Schema.String,
   message: Schema.String,
+  code: Schema.optional(Schema.String),
 }) {}
 
 export class Mux extends Context.Service<
@@ -23,5 +29,9 @@ export class Mux extends Context.Service<
   {
     readonly id: string;
     readonly spawn: (request: SpawnRequest) => Effect.Effect<SpawnResult, MuxError>;
+    readonly waitForExit: (
+      paneId: string,
+      signal: AbortSignal,
+    ) => Effect.Effect<ExitResult, MuxError>;
   }
 >()("pi/subagents/mux/Mux") {}
