@@ -125,9 +125,25 @@ function spawnAndWait(signal: AbortSignal) {
 }
 
 test("Herdr mux lifecycle", async (t) => {
-  await t.test("waits for the tracked foreground process without reading pane output", async () => {
+  await t.test("keeps tracked process state across separate Effect runs", async () => {
     await withFakeHerdr("exit", async (logPath) => {
-      const result = await Effect.runPromise(spawnAndWait(new AbortController().signal));
+      const layer = createHerdrLayer();
+
+      const { paneId } = await Effect.runPromise(
+        Effect.gen(function* () {
+          const mux = yield* Mux;
+
+          return yield* mux.spawn(request);
+        }).pipe(Effect.provide(layer)),
+      );
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const mux = yield* Mux;
+
+          return yield* mux.waitForExit(paneId, new AbortController().signal);
+        }).pipe(Effect.provide(layer)),
+      );
 
       const calls = (await readFile(logPath, "utf8"))
         .trim()

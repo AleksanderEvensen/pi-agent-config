@@ -165,9 +165,10 @@ const waitForProcessStart = Effect.fn("HerdrMux.waitForProcessStart")(function* 
   );
 });
 
-const makeMux = Effect.fn("HerdrMux.make")(function* () {
+const makeMux = Effect.fn("HerdrMux.make")(function* (
+  trackedProcesses: Map<string, TrackedProcess>,
+) {
   const fs = yield* FileSystem.FileSystem;
-  const trackedProcesses = new Map<string, TrackedProcess>();
 
   const spawn = Effect.fn("HerdrMux.spawn")(function* (request: SpawnRequest) {
     const splitArgs = ["pane", "split", "--current", "--direction", "right", "--cwd", request.cwd];
@@ -276,10 +277,14 @@ const makeMux = Effect.fn("HerdrMux.make")(function* () {
 });
 
 export function createHerdrLayer(): Layer.Layer<Mux> {
+  // The extension provides this layer in separate Effect runs. Keep process
+  // state in the layer closure so waitForExit sees the preceding spawn.
+  const trackedProcesses = new Map<string, TrackedProcess>();
+
   return Layer.effect(
     Mux,
     Effect.gen(function* () {
-      const { spawn, waitForExit, sendInput } = yield* makeMux();
+      const { spawn, waitForExit, sendInput } = yield* makeMux(trackedProcesses);
 
       return Mux.of({ id: "herdr", spawn, waitForExit, sendInput });
     }),

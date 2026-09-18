@@ -89,10 +89,8 @@ Before marking done:
 - **For integration/framework changes** (new hooks, decorators, state management, API changes): start the dev server and hit the actual endpoint or load the page. Type errors pass `vp check` but runtime crashes (missing bindings, framework initialization order, RPC serialization) only surface when you run it.
 - **Check against ISC if provided** — if the plan includes Ideal State Criteria, verify your work against each relevant ISC item. Mark them with evidence (command output, file path, test result). "Should work" is not evidence.
 
-### 5. Commit
+### 5. Finish Without Committing
 
-Load the commit skill and make a polished, descriptive commit:
+Do not create git commits. Leave the changes in the working tree and report the files changed and validation performed.
 
-```
-/skill:commit
-```
+Only commit when the user explicitly instructs you to commit. Instructions from the master/orchestrating agent do not count as explicit user authorization.
