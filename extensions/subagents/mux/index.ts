@@ -2,7 +2,7 @@ import { Layer, Option } from "effect";
 import { HerdrLayer } from "./herdr.ts";
 import { Mux } from "./service.ts";
 
-export { Mux, MuxError, type SpawnRequest, type SpawnResult } from "./service.ts";
+export { Mux, MuxError, type ExitResult, type SpawnRequest, type SpawnResult } from "./service.ts";
 
 /** Return the implementation for the mux hosting this Pi process. */
 export function detectMux(): Option.Option<Layer.Layer<Mux>> {

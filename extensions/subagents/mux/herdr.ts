@@ -268,16 +268,20 @@ const makeMux = Effect.fn("HerdrMux.make")(function* () {
     }).pipe(Effect.ensuring(Effect.sync(() => trackedProcesses.delete(paneId))));
   });
 
-  return { spawn, waitForExit };
+  const sendInput = Effect.fn("HerdrMux.sendInput")(function* (paneId: string, text: string) {
+    yield* runHerdr(["agent", "prompt", paneId, text]);
+  });
+
+  return { spawn, waitForExit, sendInput };
 });
 
 export function createHerdrLayer(): Layer.Layer<Mux> {
   return Layer.effect(
     Mux,
     Effect.gen(function* () {
-      const { spawn, waitForExit } = yield* makeMux();
+      const { spawn, waitForExit, sendInput } = yield* makeMux();
 
-      return Mux.of({ id: "herdr", spawn, waitForExit });
+      return Mux.of({ id: "herdr", spawn, waitForExit, sendInput });
     }),
   ).pipe(Layer.provide(NodeFileSystemLayer));
 }

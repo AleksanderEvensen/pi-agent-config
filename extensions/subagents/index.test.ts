@@ -9,6 +9,7 @@ import type {
   MessageEndEvent,
   SessionShutdownEvent,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { Effect, Layer } from "effect";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -16,16 +17,23 @@ import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { FramedWidget } from "../../lib/framed-widget.ts";
 import subagentChild from "./agent-extension/index.ts";
 import { AgentDiscovery, discoverAgents } from "./agents.ts";
 import { createRunArchive, updateRunMetadata } from "./history.ts";
 import subagents, {
   agentArguments,
   CHILD_EXTENSION_PATH,
+  deliveredSubagentRunIds,
+  extensionPathsForTools,
+  formatElapsed,
+  uniqueSubagentName,
   validateAgentConfigurations,
+  waitForSubagentResultOrExit,
   watchSubagentResult,
 } from "./index.ts";
 import { herdrCommandLine, herdrScriptCommand } from "./mux/herdr.ts";
+import { readSubagentStatus, writeSubagentStatus } from "./status.ts";
 
 function testDouble<T, V = unknown>(value: V): T {
   // SAFETY: test doubles intentionally implement only the members exercised by each test.
@@ -69,6 +77,64 @@ function assistant(
     },
   };
 }
+
+test("assigns stable unique names for parallel subagents", () => {
+  assert.equal(uniqueSubagentName("scout", new Set()), "scout");
+  assert.equal(uniqueSubagentName("scout", new Set(["scout", "scout-2"])), "scout-3");
+});
+
+test("detects subagent results once they enter the parent context", () => {
+  const messages = testDouble<Parameters<typeof deliveredSubagentRunIds>[0]>([
+    {
+      role: "custom",
+      customType: "subagent_result",
+      content: "done",
+      display: true,
+      details: { runId: "run-1" },
+      timestamp: Date.now(),
+    },
+    {
+      role: "custom",
+      customType: "other",
+      content: "ignore",
+      display: true,
+      details: { runId: "run-2" },
+      timestamp: Date.now(),
+    },
+  ]);
+
+  assert.deepEqual(deliveredSubagentRunIds(messages), ["run-1"]);
+});
+
+test("framed widgets stay within their requested width", () => {
+  const widget = new FramedWidget((innerWidth) => ({
+    title: "Subagents",
+    rightTitle: "2 running",
+    lines: ["x".repeat(innerWidth + 20)],
+  }));
+
+  for (const width of [4, 7, 20, 60]) {
+    const lines = widget.render(width);
+    assert.ok(lines.every((line) => visibleWidth(line) === width));
+  }
+
+  assert.equal(formatElapsed(0, 65_000), "01:05");
+});
+
+test("live status files are atomically readable", async () => {
+  const path = join(tmpdir(), `pi-subagent-status-test-${randomUUID()}.json`);
+
+  try {
+    await writeSubagentStatus(path, "active", "bash: pnpm run typecheck");
+    const status = await readSubagentStatus(path);
+
+    assert.equal(status?.state, "active");
+    assert.equal(status?.stage, "bash: pnpm run typecheck");
+  } finally {
+    await rm(path, { force: true });
+    await rm(`${path}.tmp`, { force: true });
+  }
+});
 
 test("agent discovery can be replaced without touching the filesystem", async () => {
   const calls: Array<readonly [string, boolean]> = [];
@@ -138,6 +204,7 @@ test("reload-agents refreshes valid configurations and shows their source paths"
   type ShutdownHandler = (event: SessionShutdownEvent, ctx: ExtensionContext) => void;
 
   const commands = new Map<string, CommandHandler>();
+  const registeredTools = new Set<string>();
   let shutdown: ShutdownHandler | undefined;
   let activeTools = ["read"];
   let widgetLines: string[] = [];
@@ -158,7 +225,7 @@ test("reload-agents refreshes valid configurations and shows their source paths"
 
   // SAFETY: this test double implements only the API members exercised here.
   const pi = testDouble<ExtensionAPI>({
-    registerTool: () => {},
+    registerTool: (tool: { name: string }) => registeredTools.add(tool.name),
     registerCommand: (name: string, options: { handler: CommandHandler }) =>
       commands.set(name, options.handler),
     on: (name: string, handler: ShutdownHandler) => {
@@ -202,7 +269,9 @@ test("reload-agents refreshes valid configurations and shows their source paths"
     assert.ok(widgetLines.some((line) => line.includes("worker — openai-codex/gpt-5.6-sol")));
     assert.ok(widgetLines.some((line) => line.includes("agents/worker.md")));
     assert.ok(activeTools.includes("subagent"));
+    assert.ok(activeTools.includes("subagent_message"));
     assert.ok(activeTools.includes("subagent_history"));
+    assert.ok(registeredTools.has("subagent_message"));
     shutdown?.({ type: "session_shutdown", reason: "quit" }, ctx);
   } finally {
     if (previousHerdrEnv === undefined) delete process.env.HERDR_ENV;
@@ -233,6 +302,17 @@ test("closes an auto-exit pane only after a successful child exit", () => {
   assert.match(command, /^'pi' 'task'; status=\$\?;/);
   assert.match(command, /then herdr pane close 'w1:p2'/);
   assert.match(command, /pane kept open for inspection/);
+});
+
+test("reports a child process that exits without producing a result", async () => {
+  await assert.rejects(
+    waitForSubagentResultOrExit(
+      new Promise(() => {}),
+      Promise.resolve({ paneId: "w1:p2", reason: "process-exited" }),
+      0,
+    ),
+    /process in w1:p2 exited before producing a result/,
+  );
 });
 
 test("reads a validated child result without deleting the recovery copy", async () => {
@@ -266,6 +346,10 @@ test("creates and updates a durable run archive", async () => {
     assert.equal(initial.runId, archive.runId);
     assert.equal(initial.status, "starting");
     assert.equal(initial.transcriptPath, archive.transcriptPath);
+    const liveStatus = JSON.parse(await readFile(archive.statusPath, "utf8"));
+    assert.equal(liveStatus.version, 1);
+    assert.equal(liveStatus.state, "starting");
+    assert.equal(liveStatus.stage, "launching");
 
     await updateRunMetadata(archive.metadataPath, { status: "running", paneId: "w1:p2" });
 
@@ -393,11 +477,59 @@ test("reports an empty terminal response as an error with substantive fallback t
   }
 });
 
+test("isolates extension-backed tools by their registered source path", () => {
+  const extensionPath = CHILD_EXTENSION_PATH;
+
+  const tools = [
+    {
+      name: "read",
+      sourceInfo: {
+        path: "<builtin:read>",
+        source: "builtin",
+        scope: "temporary",
+        origin: "top-level",
+      },
+    },
+    {
+      name: "web_search",
+      sourceInfo: {
+        path: extensionPath,
+        source: "pi-web-access",
+        scope: "user",
+        origin: "package",
+      },
+    },
+  ];
+
+  assert.deepEqual(extensionPathsForTools(["read", "web_search"], testDouble(tools)), [
+    extensionPath,
+  ]);
+  assert.throws(
+    () =>
+      extensionPathsForTools(
+        ["sdk_tool"],
+        testDouble([
+          {
+            name: "sdk_tool",
+            sourceInfo: {
+              path: "<sdk:sdk_tool>",
+              source: "sdk",
+              scope: "temporary",
+              origin: "top-level",
+            },
+          },
+        ]),
+      ),
+    /cannot be isolated/,
+  );
+});
+
 test("always loads reporting, while auto-exit remains a separate policy", () => {
   const expected = [
     "--name",
     "Scout: Auth",
     "--no-session",
+    "--no-extensions",
     "--extension",
     CHILD_EXTENSION_PATH,
     "--model",

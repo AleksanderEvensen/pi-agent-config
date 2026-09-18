@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import { decodeJson } from "../../lib/effect.ts";
 import { SubagentResult } from "./agent-extension/index.ts";
+import { writeSubagentStatus } from "./status.ts";
 
 const RUN_DIRECTORY_PREFIX = "pi-subagent-run-";
 
@@ -52,6 +53,7 @@ export type RunArchive = {
   readonly metadataPath: string;
   readonly transcriptPath: string;
   readonly resultPath: string;
+  readonly statusPath: string;
 };
 
 const HistoryParameters = Type.Object({
@@ -131,6 +133,7 @@ export async function createRunArchive({
   const metadataPath = join(directory, "metadata.json");
   const transcriptPath = join(directory, "conversation.jsonl");
   const resultPath = join(directory, "result.json");
+  const statusPath = join(directory, "status.json");
   const now = new Date().toISOString();
 
   await mkdir(directory, { mode: 0o700 });
@@ -148,8 +151,9 @@ export async function createRunArchive({
     transcriptPath,
     resultPath,
   } satisfies RunMetadata);
+  await writeSubagentStatus(statusPath, "starting", "launching");
 
-  return { runId, directory, metadataPath, transcriptPath, resultPath };
+  return { runId, directory, metadataPath, transcriptPath, resultPath, statusPath };
 }
 
 export async function updateRunMetadata(

@@ -153,6 +153,24 @@ test("Herdr mux lifecycle", async (t) => {
     });
   });
 
+  await t.test("sends steering text through the Herdr agent prompt surface", async () => {
+    await withFakeHerdr("exit", async (logPath) => {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const mux = yield* Mux;
+          yield* mux.sendInput("w1:p2", "Focus on the failing test.");
+        }).pipe(Effect.provide(createHerdrLayer())),
+      );
+
+      const calls = (await readFile(logPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line): string[] => JSON.parse(line));
+
+      assert.deepEqual(calls, [["agent", "prompt", "w1:p2", "Focus on the failing test."]]);
+    });
+  });
+
   await t.test("rolls back a pane and temporary files while keeping the launch error", async () => {
     await withFakeHerdr("run-failure", async (logPath) => {
       const spawning = Effect.runPromise(

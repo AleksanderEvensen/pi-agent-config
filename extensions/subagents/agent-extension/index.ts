@@ -1,6 +1,7 @@
 import type { AgentEndEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Effect, FileSystem, Schema } from "effect";
 import { runWithNodeServices } from "../../../lib/effect.ts";
+import { type SubagentLiveState, writeSubagentStatus } from "../status.ts";
 
 export const SubagentResult = Schema.Struct({
   text: Schema.String,
@@ -34,11 +35,44 @@ function findLastMatching(
 export default function subagentChild(pi: ExtensionAPI): void {
   const resultPath = process.env.PI_SUBAGENT_RESULT_PATH;
   const transcriptPath = process.env.PI_SUBAGENT_TRANSCRIPT_PATH;
+  const statusPath = process.env.PI_SUBAGENT_STATUS_PATH;
   const autoExit = process.env.PI_SUBAGENT_AUTO_EXIT === "1";
   const assistantMessages: AssistantMessage[] = [];
   let lastRunMessages: AgentEndEvent["messages"] = [];
   let transcriptIndex = 0;
   let transcriptWrites = Promise.resolve();
+  let statusWrites = Promise.resolve();
+
+  const reportStatus = (state: SubagentLiveState, stage: string): void => {
+    if (!statusPath) return;
+    statusWrites = statusWrites
+      .catch(() => {})
+      .then(() => writeSubagentStatus(statusPath, state, stage));
+  };
+
+  pi.on("session_start", () => reportStatus("starting", "starting agent"));
+  pi.on("agent_start", () => reportStatus("active", "thinking"));
+  pi.on("turn_start", () => reportStatus("active", "thinking"));
+  pi.on("message_start", (event) => {
+    if (event.message.role === "assistant") reportStatus("active", "responding");
+  });
+  pi.on("tool_execution_start", (event) => {
+    const candidate =
+      event.args.command ??
+      event.args.path ??
+      event.args.query ??
+      event.args.url ??
+      event.args.name;
+
+    const detail = Schema.is(Schema.String)(candidate)
+      ? candidate.replaceAll(/\s+/g, " ").trim().slice(0, 80)
+      : Schema.is(Schema.Array(Schema.String))(event.args.queries)
+        ? event.args.queries.join(", ").slice(0, 80)
+        : "";
+
+    reportStatus("active", detail ? `${event.toolName}: ${detail}` : event.toolName);
+  });
+  pi.on("tool_execution_end", () => reportStatus("active", "thinking"));
 
   pi.on("message_end", (event) => {
     if (event.message.role === "assistant") assistantMessages.push(event.message);
@@ -95,6 +129,9 @@ export default function subagentChild(pi: ExtensionAPI): void {
         : "Subagent settled without a textual final response.";
       isError = true;
     }
+
+    reportStatus(isError ? "failed" : "finished", isError ? "failed" : "complete");
+    await statusWrites.catch(() => {});
 
     await runWithNodeServices(
       Effect.gen(function* () {

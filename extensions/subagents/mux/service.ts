@@ -33,5 +33,6 @@ export class Mux extends Context.Service<
       paneId: string,
       signal: AbortSignal,
     ) => Effect.Effect<ExitResult, MuxError>;
+    readonly sendInput: (paneId: string, text: string) => Effect.Effect<void, MuxError>;
   }
 >()("pi/subagents/mux/Mux") {}
