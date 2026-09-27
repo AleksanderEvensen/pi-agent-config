@@ -117,21 +117,16 @@ function footerParts(pi: ExtensionAPI, ctx: ExtensionContext, footerData: Footer
   const branch = footerData.getGitBranch();
   const model = ctx.model?.id ?? "no-model";
   const effort = pi.getThinkingLevel?.() ?? "off";
-  const extensionStatuses = [...footerData.getExtensionStatuses().values()];
+  const location = [dim(displayCwd(ctx.cwd)), branch ? orange(branch) : undefined, model, `[${effort}]`];
 
-  const parts = [
-    dim(displayCwd(ctx.cwd)),
-    branch ? orange(branch) : undefined,
-    model,
-    `[${effort}]`,
-    ...extensionStatuses,
+  const details = [
     contextText(ctx),
     cachedText(ctx),
     ioText(ctx),
   ];
 
   // SAFETY: every optional branch is removed by the Boolean filter.
-  return parts.filter(Boolean) as string[];
+  return [location, details].map((parts) => parts.filter(Boolean).join(" "));
 }
 
 function installFooter(pi: ExtensionAPI, ctx: ExtensionContext) {
@@ -142,7 +137,7 @@ function installFooter(pi: ExtensionAPI, ctx: ExtensionContext) {
       dispose: unsubBranch,
       invalidate() {},
       render(width: number): string[] {
-        return [truncateToWidth(`  ${footerParts(pi, ctx, footerData).join(" ")}`, width)];
+        return footerParts(pi, ctx, footerData).map((line) => truncateToWidth(`  ${line}`, width));
       },
     };
   });
