@@ -7,6 +7,7 @@ export type AgentConfig = {
   readonly name: string;
   readonly description: string;
   readonly tools: readonly string[];
+  readonly extensions: readonly string[];
   readonly model?: string;
   readonly thinking?: ModelThinkingLevel;
   readonly systemPromptMode: "replace" | "append";
@@ -32,6 +33,7 @@ const AgentFrontmatter = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   tools: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  extensions: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   model: Schema.optionalKey(Schema.String),
   thinking: Schema.optionalKey(
     Schema.Literals(["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
@@ -65,6 +67,7 @@ const loadAgent = Effect.fn("AgentDiscovery.loadAgent")(function* (filePath: str
     name: frontmatter.name,
     description: frontmatter.description,
     tools: toolNames(frontmatter.tools),
+    extensions: toolNames(frontmatter.extensions),
     model: frontmatter.model,
     thinking: frontmatter.thinking,
     systemPromptMode: frontmatter["system-prompt"] ?? "append",

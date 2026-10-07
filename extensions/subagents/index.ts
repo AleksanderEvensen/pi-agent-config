@@ -9,7 +9,8 @@ import type {
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Effect, Layer, Option, Schema } from "effect";
 import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { errorMessage } from "../../lib/errors.ts";
@@ -248,6 +249,13 @@ export function agentArguments(
   ];
 
   for (const path of toolExtensionPaths) args.push("--extension", path);
+
+  for (const rawPath of agent.extensions ?? []) {
+    const expanded = rawPath.startsWith("~/")
+      ? join(homedir(), rawPath.slice(2))
+      : rawPath;
+    args.push("--extension", expanded);
+  }
 
   if (agent.model) args.push("--model", agent.model);
 
